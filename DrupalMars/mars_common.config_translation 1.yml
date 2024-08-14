@@ -1,0 +1,5 @@
+mars_common.emails_configuration:
+  title: 'MARS Emails configuration'
+  base_route_name: mars_common.admin.emails_configuration
+  names:
+    - mars_common.emails_configuration

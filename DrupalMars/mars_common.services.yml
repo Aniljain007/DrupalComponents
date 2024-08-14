@@ -1,0 +1,106 @@
+services:
+  mars_common.language_helper:
+    class: Drupal\mars_common\LanguageHelper
+    arguments: ['@language_manager', '@string_translation']
+
+  mars_common.language_helper_twig_filters:
+    class: Drupal\mars_common\Twig\LanguageTwigFilter
+    arguments:
+      [ '@mars_common.language_helper' ]
+    tags:
+      - {name: twig.extension}
+
+  logger.channel.mars_common:
+    parent: logger.channel_base
+    arguments: [ 'mars_common' ]
+
+  mars_common.menu_builder:
+    class: Drupal\mars_common\MenuBuilder
+    arguments: ['@menu.link_tree', '@entity_type.manager', '@file_url_generator']
+
+  mars_common.theme_configurator_parser:
+    class: Drupal\mars_common\ThemeConfiguratorParser
+    arguments: [ '@entity_type.manager', '@config.factory', '@mars_media.svg_factory' ,'@logger.channel.mars_common', '@file_url_generator' ]
+
+  mars_common.route_subscriber:
+    class: Drupal\mars_common\Routing\RouteSubscriber
+    tags:
+      - { name: event_subscriber }
+
+  mars_common.theme_configurator_service:
+    arguments: [ '@image.factory', '@module_handler', '@file_system', '@config.factory', '@entity_type.manager', '@file_url_generator' ]
+    class: Drupal\mars_common\ThemeConfiguratorService
+
+  mars_common.theme_config_factory_override:
+    class: Drupal\mars_common\ThemeOverride\ConfigFactoryOverride
+    arguments: [ '@config.factory', '@config.installer', '@mars_common.theme_override_service' ]
+    tags:
+      - { name: config.factory.override, priority: 5 }
+
+  mars_common.theme_override_service:
+    class: Drupal\mars_common\ThemeOverride\ThemeOverrideService
+    arguments: [ '@current_route_match', '@config.factory' ]
+
+  cache_context.theme_override:
+    class: Drupal\mars_common\Cache\Context\ThemeOverrideContext
+    arguments: [ '@mars_common.theme_override_service' ]
+    tags:
+      - { name: cache.context }
+
+  mars_common.bg_color_class_map.twig_extension:
+    class: Drupal\mars_common\Twig\BgColorClassMapper
+    tags:
+      - { name: twig.extension }
+
+  mars_common_event_subscriber:
+    class: Drupal\mars_common\EventSubscriber\LanguageAccessSubscriber
+    arguments: ['@current_user', '@language_manager', '@request_stack', '@config.factory']
+    tags:
+      - {name: event_subscriber}
+
+  mars_common_event_subscriber_gpc:
+    class: Drupal\mars_common\EventSubscriber\GpcSubscriber
+    arguments: ['@config.factory']
+    tags:
+      - {name: event_subscriber}
+
+  mars_common_event_subscriber_social_media_icon:
+    class: Drupal\mars_common\EventSubscriber\SocialMediaSubscriber
+    arguments: []
+    tags:
+      - {name: event_subscriber}
+
+  mars_common.screen_reader_twig_filters:
+    class: Drupal\mars_common\Twig\SrOnlyTwigFilter
+    arguments:
+      [ '@mars_common.language_helper' ]
+    tags:
+      - {name: twig.extension}
+
+  mars_common.add_br_tag_after_first_word:
+    class: Drupal\mars_common\Twig\BrAfterFirstWord
+    tags:
+      - {name: twig.extension}
+
+  mars_common.optimize_path_filter.twig_extension:
+    class: Drupal\mars_common\Twig\OptimizePathFilter
+    tags:
+      - { name: twig.extension }
+
+  mars_common.block_helper:
+    class: Drupal\mars_common\BlockHelper
+    arguments: ['@entity_type.manager', '@mars_common.media_helper', '@config.factory', '@language_manager', '@file_url_generator', '@theme.manager']
+  mars_common.media_helper:
+    class: Drupal\mars_common\MediaHelper
+    arguments: ['@entity_type.manager']
+
+  mars_common.render_block_component_subscriber:
+    class: Drupal\mars_common\EventSubscriber\MarsBlockComponentRenderArraySubscriber
+    arguments: ['@entity_type.manager', '@config.factory']
+    tags:
+    - { name: event_subscriber }
+
+  mars_common.config_defaults_provider:
+    class: '\Drupal\mars_common\Client\ApiDefaultsProvider'
+    arguments:
+      ['@settings']

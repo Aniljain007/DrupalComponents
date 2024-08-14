@@ -1,0 +1,9 @@
+name: 'Mars Common'
+type: module
+description: 'Global elements.'
+package: 'Mars'
+core_version_requirement: ^9 || ^10
+dependencies:
+  - juicer_io:juicer_io
+  - mars_media:mars_media
+  - translatable_menu_link_uri:translatable_menu_link_uri

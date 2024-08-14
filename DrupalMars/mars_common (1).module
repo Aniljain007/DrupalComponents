@@ -1,0 +1,3638 @@
+<?php
+
+/**
+ * @file
+ * MARS Common module main file.
+ */
+
+use Drupal\block_content\BlockContentInterface;
+use Drupal\Core\Cache\Cache;
+use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\Entity\ContentEntityForm;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\Core\Field\WidgetBase;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\Menu\MenuTreeParameters;
+use Drupal\Core\Render\Element;
+use Drupal\Core\Render\Markup;
+use Drupal\Core\Url;
+use Drupal\field\Entity\FieldConfig;
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\layout_builder\Entity\LayoutEntityDisplayInterface;
+use Drupal\layout_builder\Form\DefaultsEntityForm;
+use Drupal\layout_builder\Form\OverridesEntityForm;
+use Drupal\layout_builder\SectionComponent;
+use Drupal\mars_common\Constants\MenuConstants;
+use Drupal\mars_common\Constants\SocialMediaConstants;
+use Drupal\mars_common\Form\Alter\AboutPageLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\ArticleLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\CampaignLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\ContactHelpLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\ContentHubPageLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\HomepageLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\LandingPageLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\NewsletterSignUpLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\ProductLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\RecipeLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\SearchLayoutFormAlter;
+use Drupal\mars_common\Form\Alter\WhereToBuyLayoutFormAlter;
+use Drupal\mars_common\Form\MarsCardColorSettingsForm;
+use Drupal\mars_common\Form\MarsEmailsConfigurationForm;
+use Drupal\mars_common\Plugin\Block\FooterBlock;
+use Drupal\mars_common\Plugin\Block\FreeformStoryBlock;
+use Drupal\mars_common\Twig\OptimizePathFilter;
+use Drupal\mars_media\SVG\SVG;
+use Drupal\mars_product\Form\BazaarvoiceConfigForm;
+use Drupal\mars_product\Plugin\Block\PdpHeroBlock;
+use Drupal\menu_link_content\Entity\MenuLinkContent;
+use Drupal\node\Entity\Node;
+use Drupal\node\NodeInterface;
+use Drupal\system\Entity\Menu;
+use Drupal\taxonomy\TermInterface;
+
+/**
+ * Implements hook_page_attachments_alter().
+ */
+function mars_common_page_attachments_alter(array &$page) {
+  $hreflang_toggle = \Drupal::service('config.factory')->get('mars_common.system.site');
+  $hreflang_toggle_value = $hreflang_toggle->get('unset_hreflang');
+  $hreflang_toggle_value_other = $hreflang_toggle->get('unset_hreflang_other');
+  if ($hreflang_toggle_value) {
+    foreach ($page['#attached']['html_head_link'] as $key => $attachment) {
+      if ($attachment[0]['rel'] == 'alternate' && $attachment[0]['hreflang'] == 'en') {
+        unset($page['#attached']['html_head_link'][$key]);
+      }
+    }
+  }
+  // Remove hreflang for other Languages.
+  if ($hreflang_toggle_value_other) {
+    foreach ($page['#attached']['html_head_link'] as $key => $attachment) {
+      if (isset($attachment[0]['hreflang']) && ($attachment[0]['hreflang'] == $hreflang_toggle_value_other)) {
+        unset($page['#attached']['html_head_link'][$key]);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_menu_insert().
+ */
+function mars_common_menu_insert(Menu $menu) {
+  if (in_array($menu->id(), ['main', 'error-page-menu'])) {
+    foreach (['Home', 'Products', 'About'] as $weight => $title) {
+      $menu_link = MenuLinkContent::create([
+        'title' => $title,
+        'link' => ['uri' => 'internal:/'],
+        'menu_name' => $menu->id(),
+        'expanded' => TRUE,
+        'weight' => $weight - 3,
+      ]);
+      $menu_link->save();
+    }
+  }
+}
+
+/**
+ * Implements hook_preprocess_node().
+ */
+function mars_common_preprocess_node(&$variables) {
+  // Remove title of personalization content type.
+  if ($variables['node']->getType() == 'personalization') {
+    $variables['label'] = '';
+    $variables['personalization_type'] = 'personalization';
+    $variables['page'] = TRUE;
+  }
+
+  unset($variables['attributes']['role']);
+}
+
+/**
+ * Implements hook_preprocess().
+ */
+function mars_common_preprocess(&$variables, $hook) {
+  /** @var \Drupal\mars_common\ThemeConfiguratorParser $themeParser */
+  $variables['current_profile'] = $current_profile_is_pn = mars_common_is_pn_profile();
+  $variables['fishcare_split_enabled'] = mars_common_is_fishcare_split_enabled();
+  if ($hook === 'views_view__grid_card') {
+    $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+    $file_divider_content = $themeParser->getGraphicDivider();
+    $file_border_content = $themeParser->getBrandBorder2();
+    $border_radius = Drupal::config('emulsifymars.settings')->get('button_style');
+
+    $variables['theme_styles'] = 'drupal';
+    $variables['graphic_divider'] = $file_divider_content ?? '';
+    $variables['brand_border'] = ($variables['view']->args[1]) ? $file_border_content : '';
+    $variables['overlaps_previous'] = $variables['view']->args[2] ?? '';
+    $variables['ajax_card_grid_heading'] = $variables['view']->args[0] ?? '';
+    $variables['ajax_card_grid_link_text'] = 'See All';
+    $variables['ajax_card_grid_border_radius'] = $border_radius ?? 0;
+  }
+
+  $view_mode_is_card =
+    isset($variables['view_mode']) &&
+    $variables['view_mode'] === 'card';
+
+  $is_article_card =
+    $hook === 'node' &&
+    $view_mode_is_card &&
+    isset($variables['node']) &&
+    $variables['node'] instanceof Node &&
+    $variables['node']->bundle() === 'article';
+
+  if ($is_article_card || $hook === 'poll_results') {
+    $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+    $brand_shape_content = $themeParser->getBrandShapeWithoutFill();
+    $variables['brand_shape'] = $brand_shape_content ?? '';
+  }
+
+  if ($hook === 'poll_vote' || $hook === 'poll_results') {
+    $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+    $variables['polling_png_asset'] = $themeParser->getUrlForFile('png_asset');
+    $brand_shape_content = $themeParser->getBrandShapeWithoutFill();
+    $variables['brand_shape'] = $brand_shape_content ?? '';
+  }
+
+  if ($hook === 'views_infinite_scroll_pager__grid_card') {
+    $border_radius = Drupal::config('emulsifymars.settings')
+      ->get('button_style');
+    $variables['default_link_border_radius'] = $border_radius ?? 0;
+  }
+
+  $is_campaign_card =
+    $hook === 'node' &&
+    $view_mode_is_card &&
+    isset($variables['node']) &&
+    $variables['node'] instanceof Node &&
+    $variables['node']->bundle() === 'campaign';
+
+  if ($is_campaign_card) {
+    $variables['open_new_tab'] = Drupal::config('emulsifymars.settings')
+      ->get('open_new_tab');
+  }
+
+  $is_landing_page_card =
+    $hook === 'node' &&
+    $view_mode_is_card &&
+    isset($variables['node']) &&
+    $variables['node'] instanceof Node &&
+    $variables['node']->bundle() === 'landing_page';
+
+  if ($is_landing_page_card) {
+    $variables['new_tab'] = Drupal::config('emulsifymars.settings')
+      ->get('new_tab');
+  }
+  $is_content_hub_card =
+    $hook === 'node' &&
+    $view_mode_is_card &&
+    isset($variables['node']) &&
+    $variables['node'] instanceof Node &&
+    $variables['node']->bundle() === 'content_hub_page';
+
+  if ($is_content_hub_card) {
+    $variables['open_linkin_new_tab'] = Drupal::config('emulsifymars.settings')
+      ->get('open_linkin_new_tab') ?? 1;
+  }
+  $variables['cta_button_hover'] = Drupal::config('emulsifymars.settings')->get('cta_button_hover');
+  if ($variables['cta_button_hover'] == 1) {
+    $variables['button_hover'] = 'no_hover_cta';
+  }
+  else {
+    $variables['button_hover'] = '';
+  }
+  $content_pages = ['recipe', 'product', 'campaign',
+    'landing', 'hub_card', 'article',
+  ];
+  $cardcolors = \Drupal::configFactory()->getEditable('emulsifymars.settings');
+
+  // Card Component border Colors config.
+  foreach ($content_pages as $page_title) {
+    $border_enabaled = $cardcolors->get('enable_border_' . $page_title);
+    $borderclr = $cardcolors->get('select_border_color_' . $page_title);
+    if (($border_enabaled) && !empty($borderclr)) {
+      $bordercolor = $borderclr;
+      $variables['select_border_color_' . $page_title] = $cardcolors->get("$bordercolor");
+    }
+  }
+
+  $variables['carousel_bg_color'] = Drupal::config('emulsifymars.settings')->get('carousel_bg_color');
+  if ($variables['carousel_bg_color']) {
+    $variables['carousel_bg_class'] = 1;
+  }
+  else {
+    $variables['carousel_bg_class'] = 0;
+  }
+  $variables['suggestions_list_view'] = Drupal::config('emulsifymars.settings')->get('suggestions_list_view');
+  if ($variables['suggestions_list_view'] == 1) {
+    $variables['suggestions_list_view_class'] = 'suggestions-list-view';
+  }
+  else {
+    $variables['suggestions_list_view_class'] = '';
+  }
+  $variables['card_hover'] = Drupal::config('emulsifymars.settings')->get('card_hover');
+  if ($variables['card_hover'] == 1) {
+    $variables['cta_card_hover'] = 'no_hover_card';
+  }
+  else {
+    $variables['cta_card_hover'] = 'hover-helper';
+  }
+  $variables['text_alignment_center'] = Drupal::config('emulsifymars.settings')->get('text_alignment_center');
+  if ($variables['text_alignment_center'] == 1) {
+    $variables['cta_text_alignment_center'] = 'text_alignment_center';
+  }
+  else {
+    $variables['cta_text_alignment_center'] = '';
+  }
+  $variables['weight_normal'] = Drupal::config('emulsifymars.settings')->get('font_weight_normal');
+  if ($variables['weight_normal'] == 1) {
+    $variables['font_weight_normal'] = 'font_weight_normal';
+  }
+  else {
+    $variables['font_weight_normal'] = '';
+  }
+  $variables['product_cta_button'] = Drupal::config('emulsifymars.settings')->get('product_cta_button');
+  $variables['hide_button'] = Drupal::config('emulsifymars.settings')->get('hide_button');
+  if ($variables['hide_button'] == 1) {
+    $variables['remove_button'] = 'hide_button';
+  }
+  else {
+    $variables['remove_button'] = '';
+  }
+  $variables['underline_text'] = Drupal::config('emulsifymars.settings')->get('underline_text');
+  if ($variables['underline_text'] == 1) {
+    $variables['breadcrumb_underline'] = 'underline_style';
+  }
+  else {
+    $variables['breadcrumb_underline'] = '';
+  }
+  $variables['age_calc_dark_overlay'] = Drupal::config('emulsifymars.settings')->get('age_calc_dark_overlay');
+  if ($variables['age_calc_dark_overlay'] == 1) {
+    $variables['age_calc_dark_overlay'] = 'age_calc_dark_overlay';
+  }
+  else {
+    $variables['age_calc_dark_overlay'] = '';
+  }
+  if ($current_profile_is_pn) {
+    $variables['pn_pdp_product_description_on_top'] = Drupal::config('emulsifymars.settings')->get('pn_pdp_product_description_on_top');
+    $variables['enable_vertically_collapsed_section'] = Drupal::config('emulsifymars.settings')->get('enable_vertically_collapsed_section') ?? FALSE;
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function mars_common_theme($existing, $type, $theme, $path) {
+  return [
+    'header_block' => [
+      'variables' => [
+        'logo' => NULL,
+        'logo_alt' => NULL,
+        'logo_full_size' => NULL,
+        'primary_menu' => NULL,
+        'mega_display' => NULL,
+        'secondary_menu' => NULL,
+        'disable_mobile_menu_view' => NULL,
+        'search_menu' => NULL,
+        'language_selector' => NULL,
+        'language_selector_current' => NULL,
+        'language_selector_label' => NULL,
+        'language_selector_items' => NULL,
+        'search_block' => NULL,
+        'header_line_separator' => NULL,
+        'header_line_separator_color' => NULL,
+        'alert_banner_text' => NULL,
+        'alert_banner_url' => NULL,
+        'mobile_v2' => NULL,
+        'mobile_accessibility_icon' => NULL,
+        'mobile_search_icon' => NULL,
+        'mobile_chat_icon' => NULL,
+        'mobile_chat_option' => NULL,
+        'mobile_chat_option_value' => NULL,
+        'search_form' => NULL,
+        'search_close_label' => NULL,
+        'search_enabled' => NULL,
+        'search_title' => NULL,
+        'brand_border' => NULL,
+        'text_color_override' => NULL,
+        'hover_color' => NULL,
+        'override_mobile_menu_colors' => NULL,
+        'mobile_main_menu_items_color' => NULL,
+        'mobile_cross_hamburger' => NULL,
+        'mobile_sub_menu_items_color' => NULL,
+        'mobile_search_right_menu_section' => NULL,
+        'alert_banner_override_color' => NULL,
+        'alert_banner_bg_color' => NULL,
+        'show_divider' => NULL,
+        'divider_color' => NULL,
+        'alert_banner_text_color' => NULL,
+      ],
+      'template' => 'block--mars-common--header',
+    ],
+    'alert_banner_block' => [
+      'variables' => [
+        'alert_banner_text' => NULL,
+        'alert_banner_url' => NULL,
+        'alert_banner_bg_color' => NULL,
+        'alert_banner_text_color' => NULL,
+        'alert_banner_color_overide' => NULL,
+        'multiple_alert_banner_block' => NULL,
+        'cta_button_target' => NULL,
+      ],
+      'template' => 'alert-banner-block',
+    ],
+    'recipe_social_icon_block' => [
+      'variables' => [
+        'social_links' => NULL,
+        'social_text' => NULL,
+      ],
+      'template' => 'block--recipe-social-icon-block',
+    ],
+    'footer_block' => [
+      'variables' => [
+        'logo' => NULL,
+        'logo_alt' => NULL,
+        'logo_full_size' => NULL,
+        'brand_border' => NULL,
+        'cookie_banner_brand_border' => NULL,
+        'cookie_banner_override' => NULL,
+        'social_links' => NULL,
+        'top_footer_menu' => NULL,
+        'legal_links' => NULL,
+        'marketing' => NULL,
+        'corporate_tout_text' => NULL,
+        'corporate_tout_url' => NULL,
+        'region_title' => NULL,
+        'region_selector' => NULL,
+        'social_header' => NULL,
+        'current_region_title' => NULL,
+        'text_color_override' => NULL,
+        'hover_color' => NULL,
+        'cta_button_label' => NULL,
+        'cta_button_target' => NULL,
+        'footer_logo_toogle' => NULL,
+        'footer_logo_alt' => NULL,
+        'footer_logo_id' => NULL,
+        'footer_logo_path' => NULL,
+        'remove_social_icon_space'  => NULL,
+        'remove_top_footer_space' => NULL,
+        'footer_language_selector_lable_link' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'footer-block',
+    ],
+    'content_feature_module_block' => [
+      'variables' => [
+        'eyebrow' => NULL,
+        'title' => NULL,
+        'background_images' => NULL,
+        'description' => NULL,
+        'explore_cta' => NULL,
+        'explore_cta_link' => NULL,
+        'explore_cta_link_new_tab' => NULL,
+        'border_radius' => NULL,
+        'graphic_divider' => NULL,
+        'dark_overlay' => NULL,
+        'remove_space' => NULL,
+        'eyebrow_override_letter_case' => NULL,
+        'focal_point_desktop' => NULL,
+        'focal_point_tablet' => NULL,
+        'focal_point_mobile' => NULL,
+      ],
+      'template' => 'content-feature-module-block',
+    ],
+    'food_block' => [
+      'variables' => [
+        'header' => NULL,
+        'hide_graphic_divider' => NULL,
+        'graphic_divider' => NULL,
+        'items' => NULL,
+      ],
+      'template' => 'food-block',
+    ],
+    'text_accordion_component' => [
+      'variables' => [
+        'title' => NULL,
+        'text_alignment' => NULL,
+        'text_item_alignment' => NULL,
+        'items' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'head_style' => NULL,
+      ],
+      'template' => 'text-accordion-component',
+    ],
+    'filter_carousel_component' => [
+      'variables' => [
+        'brand_borders' => NULL,
+        'title' => NULL,
+        'items' => NULL,
+        'stop_autoplay' => NULL,
+        'bg_color' => NULL,
+        'filter_description' => NULL,
+        'accordion_toggle' => NULL,
+      ],
+      'template' => 'block--mars-common--filter-carousel-component',
+    ],
+    'social_feed_block' => [
+      'variables' => [
+        'label' => '',
+        'items' => [],
+        'social_header' => NULL,
+        'social_feed_grid' => NULL,
+        'number' => NULL,
+        'button_text' => NULL,
+        'social_feed_date_toggle' => NULL,
+        'social_feed_icons_toggle' => NULL,
+        'social_feed_icon_color' => NULL,
+        'graphic_divider' => '',
+        'brand_border' => '',
+        'select_background_color' => NULL,
+        'overlaps_previous' => NULL,
+        'text_color_override' => NULL,
+        'social_feed_cta_text' => NULL,
+        'social_feed_cta_url' => NULL,
+        'social_feed_cta_target' => NULL,
+        'social_feed_type' => NULL,
+        'social_media_svg_image' => NULL,
+        'social_feed_lightbox' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'head_style' => NULL,
+      ],
+    ],
+    'flexible_driver_block' => [
+      'variables' => [
+        'title' => NULL,
+        'description' => NULL,
+        'cta_label' => NULL,
+        'cta_link' => NULL,
+        'asset_1' => NULL,
+        'asset_2' => NULL,
+        'icon_logo' => NULL,
+        'flexible_driver_type' => NULL,
+        'select_background_color' => NULL,
+      ],
+    ],
+    'story_highlight_block' => [
+      'variables' => [
+        'brand_border' => NULL,
+        'title' => NULL,
+        'graphic_divider' => NULL,
+        'story_description' => NULL,
+        'story_items' => [],
+        'svg_asset_src_1' => NULL,
+        'svg_asset_src_2' => NULL,
+        'svg_asset_src_3' => NULL,
+        'svg_asset_alt_1' => NULL,
+        'svg_asset_alt_2' => NULL,
+        'svg_asset_alt_3' => NULL,
+        'view_more_cta_url' => NULL,
+        'view_more_cta_label' => NULL,
+        'overlaps_previous' => NULL,
+        'text_color_override' => NULL,
+        'hide_volume' => NULL,
+      ],
+      'template' => 'story-highlight-block',
+    ],
+    'parent_page_header_block' => [
+      'variables' => [
+        'eyebrow' => NULL,
+        'eyebrow_override_letter_case' => NULL,
+        'label' => NULL,
+        'title_label_override' => NULL,
+        'background' => NULL,
+        'description' => NULL,
+        'description_read_more' => NULL,
+        'description_read_more_label' => NULL,
+        'media_type' => NULL,
+        'media_format' => NULL,
+        'brand_shape' => NULL,
+        'styles' => NULL,
+        'dark_overlay' => NULL,
+        'graphic_divider' => NULL,
+        'hide_volume' => NULL,
+        'stop_autoplay' => NULL,
+        'text_alignment' => NULL,
+        'hide_graphic_divider' => NULL,
+        'focal_point_desktop' => NULL,
+        'focal_point_tablet' => NULL,
+        'focal_point_mobile' => NULL,
+        'explore_cta' => NULL,
+        'explore_cta_link' => NULL,
+        'media' => NULL,
+        'title_font' => NULL,
+        'element_id' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'parent-page-header-block',
+    ],
+    'file_text_item_widget' => [
+      'render element' => 'element',
+    ],
+    'carousel_item_formatter' => [
+      'variables' => [
+        'item_url' => NULL,
+        'item_description' => NULL,
+        'media_type' => NULL,
+      ],
+    ],
+    'list_item_formatter' => [
+      'variables' => [
+        'item_url' => NULL,
+        'item_description' => NULL,
+      ],
+    ],
+    'product_feature_block' => [
+      'variables' => [
+        'eyebrow' => NULL,
+        'title' => NULL,
+        'background_color' => NULL,
+        'brand_shape' => NULL,
+        'image_src' => NULL,
+        'image_alt' => NULL,
+        'explore_cta' => NULL,
+        'explore_cta_link' => NULL,
+        'new_window' => NULL,
+        'eyebrow_override_letter_case' => NULL,
+        'enable_gsap_animation' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'product-feature-block',
+    ],
+    'newsletter_signup_form_block' => [
+      'variables' => [
+        'form_url' => NULL,
+        'accessibility_title' => NULL,
+      ],
+      'template' => 'newsletter-signup-form-block',
+    ],
+    'contact_form_block' => [
+      'variables' => [
+        'form_id' => NULL,
+        'override_letter_case_title' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'contact-form-block',
+    ],
+    'error_page_block' => [
+      'variables' => [
+        'title' => NULL,
+        'body' => NULL,
+        'links' => NULL,
+        'image_src' => NULL,
+        'image_alt' => NULL,
+        'graphic_divider' => NULL,
+        'brand_shape' => NULL,
+      ],
+      'template' => 'error-page-block',
+    ],
+    'contact_help_banner_block' => [
+      'variables' => [
+        'title' => NULL,
+        'description' => NULL,
+        'social_links_label' => NULL,
+        'phone_cta_label' => NULL,
+        'phone_cta_link' => NULL,
+        'email_cta_label' => NULL,
+        'email_cta_link' => NULL,
+        'help_and_contact_cta_label' => NULL,
+        'help_and_contact_cta_enable_contact_form' => NULL,
+        'help_and_contact_cta_url' => NULL,
+        'whatsapp_cta_label' => NULL,
+        'whatsapp_cta_url' => NULL,
+        'livechat_cta_label' => NULL,
+        'livechat_cta_chat_option' => NULL,
+        'livechat_cta_chat_option_value' => NULL,
+        'social_menu_items' => NULL,
+        'brand_shape' => NULL,
+        'text_color_override' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'items' => [],
+      ],
+      'template' => 'contact-help-banner-block',
+    ],
+    'iframe_block' => [
+      'variables' => [
+        'url' => NULL,
+        'iframeid' => NULL,
+        'accessibility_title' => NULL,
+        'scroll_to_top' => NULL,
+      ],
+      'template' => 'iframe-block',
+    ],
+    'supercharged_freeform_story_block' => [
+      'variables' => [
+        'items' => [],
+        'block_aligned' => NULL,
+        'text_block_alignment' => NULL,
+        'image' => NULL,
+        'imagemobile' => NULL,
+        'imagetablet' => NULL,
+        'change_font_color' => NULL,
+        'change_background_color' => NULL,
+        'image_alt' => NULL,
+        'with_cta' => NULL,
+        'icon_toggle' => NULL,
+        'brand_shape' => NULL,
+        'element_id' => NULL,
+        'cta_up_down' => NULL,
+        'text_center' => NULL,
+        'supercharged_freeform_btn' => NULL,
+        'high_resolution_image' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'supercharged-freeform-story-block',
+    ],
+    'supercharged_card_component' => [
+      'variables' => [
+        'card_label' => NULL,
+        'items' => [],
+      ],
+      'template' => 'supercharged-card-component',
+    ],
+    'back_to_top_block' => [
+      'variables' => [
+        'enable_back_to_top' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'back-to-top-block',
+    ],
+    'accessibility_tool_block' => [
+      'variables' => [
+        'enable_accessibility_tool' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'accessibility-tool-block',
+    ],
+    'freeform_story_block' => [
+      'variables' => [
+        'block_aligned' => NULL,
+        'header_1' => NULL,
+        'header_2' => NULL,
+        'element_id' => NULL,
+        'body' => NULL,
+        'background_shape' => NULL,
+        'image' => NULL,
+        'image_alt' => NULL,
+        'brand_shape' => NULL,
+        'custom_background_color' => NULL,
+        'use_custom_color' => NULL,
+        'use_original_image' => NULL,
+        'text_color_override' => NULL,
+        'use_custom_header_1_color' => NULL,
+        'use_custom_description_color' => NULL,
+        'custom_description_color' => NULL,
+        'custom_header_1_color' => NULL,
+        'use_custom_header_2_color' => NULL,
+        'custom_header_2_color' => NULL,
+        'with_cta' => NULL,
+        'cta_title' => NULL,
+        'cta_url' => NULL,
+        'cta_new_window' => NULL,
+        'cta_remove_gradian' => NULL,
+        'cta_border' => NULL,
+        'add_top_spacing' => NULL,
+        'add_bottom_spacing' => NULL,
+        'vertical_alignment' => NULL,
+        'icon_view' => NULL,
+        'use_actual_size' => NULL,
+        'available_resolutions' => NULL,
+        'hide_graphic_divider' => NULL,
+        'graphic_divider' => NULL,
+        'media_item_type' => NULL,
+        'asset_url_3D' => NULL,
+        'text_alignment' => NULL,
+        'override_bullet_points' => NULL,
+        'media' => NULL,
+        'use_mobile_video' => NULL,
+        'video_src' => NULL,
+        'media_mobile' => NULL,
+        'video_src_mobile' => NULL,
+        'thumbnail_video_time' => NULL,
+        'aspect_ratio' => NULL,
+        'hide_volume' => NULL,
+        'stop_autoplay' => NULL,
+        'block_allignment' => NULL,
+        'video_title' => NULL,
+        'use_cta_background_text_color' => NULL,
+        'audio_url' => NULL,
+        'audio_player_placement' => NULL,
+        'audio_player_background' => NULL,
+        'img_clickable' => NULL,
+        'image_video_position_mobile' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'qr_copy_text' => NULL,
+        'qr_code' => NULL,
+        'external_video_url' => NULL,
+        'external_video_url_title' => NULL,
+      ],
+      'template' => 'freeform-story-block',
+    ],
+    'poll_block' => [
+      'variables' => [
+        'poll' => NULL,
+        'text_color_override' => NULL,
+      ],
+      'template' => 'poll-block',
+    ],
+    'counter_block' => [
+      'variables' => [
+        'card1' => NULL,
+        'card2' => NULL,
+        'card3' => NULL,
+        'card4' => NULL,
+        'enable_cards' => NULL,
+        'use_date_counter' => NULL,
+        'event_date' => NULL,
+        'timezone' => NULL,
+        'date_counter_id' => NULL,
+        'remove_spacing' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'head_style' => NULL,
+      ],
+      'template' => 'counter-block',
+    ],
+    'where_to_buy_block' => [
+      'template' => 'where-to-buy-block',
+      'variables' => [
+        'commerce_vendor' => NULL,
+        'widget_id' => NULL,
+        'data_token' => NULL,
+        'data_subid' => NULL,
+        'data_locale' => NULL,
+        'data_displaylanguage' => NULL,
+        'products' => NULL,
+        'default_product' => NULL,
+        'hide_size_dropdown' => NULL,
+        'product_sku' => NULL,
+        'mikmak_product_sku' => NULL,
+        'shoppable_product_sku' => NULL,
+      ],
+    ],
+    'text_block' => [
+      'variables' => [
+        'header' => NULL,
+        'content' => NULL,
+        'iframe_width_full' => NULL,
+        'add_top_spacing' => NULL,
+        'add_bottom_spacing' => NULL,
+        'text_color_override' => NULL,
+        'text_bg_color_override' => NULL,
+        'remove_left_right_spacing' => NULL,
+        'text_override_color' => NULL,
+        'text_background_color' => NULL,
+        'custom_class' => NULL,
+        'element_id' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'text-block',
+    ],
+    'inline_image_video_block' => [
+      'variables' => [
+        'block_type' => NULL,
+        'block_alignment' => NULL,
+        'media' => NULL,
+        'video_src' => NULL,
+        'thumbnail_video_time' => NULL,
+        'hide_video_controls' => NULL,
+        'image_src' => NULL,
+        'image_alt' => NULL,
+        'shape_motif' => NULL,
+        'content' => NULL,
+        'heading' => NULL,
+        'aspect_ratio' => NULL,
+        'hide_volume' => NULL,
+        'stop_autoplay' => NULL,
+        'hide_title' => NULL,
+        'element_id' => NULL,
+        'img_clickable' => NULL,
+        'cta' => NULL,
+        'enable_fullwidth_container' => NULL,
+        'image_assets' => NULL,
+      ],
+      'template' => 'inline-image-video-block',
+    ],
+    'fullwidth_image_video_block' => [
+      'variables' => [
+        'block_type' => NULL,
+        'media' => NULL,
+        'thumbnail_video_time' => NULL,
+        'content' => NULL,
+        'heading' => NULL,
+        'heading_modifier' => NULL,
+        'hide_volume' => NULL,
+        'focal_point_desktop' => NULL,
+        'focal_point_tablet' => NULL,
+        'focal_point_mobile' => NULL,
+        'stop_autoplay' => NULL,
+        'override_fullwith_background_color' => NULL,
+        'hide_title' => NULL,
+        'fullwith_background_color' => NULL,
+        'element_id' => NULL,
+      ],
+      'template' => 'fullwidth-image-video-block',
+    ],
+    'list_component' => [
+      'variables' => [
+        'label' => NULL,
+        'ol_items' => NULL,
+      ],
+      'template' => 'block--mars-common--list-component',
+    ],
+    'carousel_component' => [
+      'variables' => [
+        'brand_borders' => NULL,
+        'title' => NULL,
+        'items' => NULL,
+        'element_id' => NULL,
+      ],
+      'template' => 'block--mars-common--media-carousel',
+    ],
+    'fullwidth_carousel_component' => [
+      'variables' => [
+        'brand_borders' => NULL,
+        'title' => NULL,
+        'carousel_version' => NULL,
+        'image_position' => NULL,
+        'hide_show_arrow' => NULL,
+        'items' => NULL,
+        'stop_autoplay' => NULL,
+        'tablet_image_size' => NULL,
+        'enable_set_slider_time' => NULL,
+        'set_slider_time' => NULL,
+        'high_resolution_image' => NULL,
+        'description_read_more_label' => NULL,
+        'element_id' => NULL,
+        'use_cta_background_text_color' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'head_style' => NULL,
+      ],
+      'template' => 'block--mars-common--media-carousel-fullwidth',
+    ],
+    'vertical_fullwidth_carousel_component' => [
+      'variables' => [
+        'brand_borders' => NULL,
+        'variation' => NULL,
+        'text_alignment' => NULL,
+        'items' => NULL,
+        'enable_set_slider_time' => NULL,
+        'set_slider_time' => NULL,
+        'static_text_eyebrow' => NULL,
+        'static_title_label' => NULL,
+        'static_title_element' => NULL,
+        'static_description' => NULL,
+        'static_cta_url' => NULL,
+        'static_new_tab' => NULL,
+        'static_cta_title' => NULL,
+        'media_type' => NULL,
+        'background' => NULL,
+        'media' => NULL,
+        'media_format' => NULL,
+        'hide_volume' => NULL,
+        'stop_autoplay' => NULL,
+        'enable_lazy_load' => NULL,
+        'element_id' => NULL,
+        'dynamic_data_theme_id' => NULL,
+        'head_style' => NULL,
+      ],
+      'template' => 'block--mars-common--media-carousel-vertical-fullwidth',
+    ],
+    'flexible_framer_block' => [
+      'variables' => [
+        'grid_label' => NULL,
+        'grid_sub_label' => NULL,
+        'grid_type' => NULL,
+        'item_type' => NULL,
+        'items' => NULL,
+        'brand_borders' => NULL,
+        'brand_shape' => NULL,
+        'divider' => NULL,
+        'select_background_color' => NULL,
+        'overlaps_previous' => NULL,
+        'text_color_override' => NULL,
+        'text_alignment' => NULL,
+        'use_padding_top' => NULL,
+        'hide_graphic_divider' => NULL,
+        'use_background_color' => NULL,
+        'use_border_color' => NULL,
+        'flexible_item_count' => NULL,
+        'round_corner' => NULL,
+        'use_carousel' => NULL,
+        'enable_continuous_scroll' => NULL,
+        'enable_filter' => NULL,
+        'element_id' => NULL,
+        'use_cta_background_text_color' => NULL,
+        'heading' => NULL,
+        'sub_heading' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'flexible-framer-block',
+    ],
+    'js_block' => [
+      'variables' => [
+        'js_code' => NULL,
+      ],
+      'template' => 'js-block',
+    ],
+    'quick_link_block' => [
+      'variables' => [
+        'title' => NULL,
+        'sub_title' => NULL,
+        'block_type' => NULL,
+        'label_type' => NULL,
+        'image_shape' => NULL,
+        'space_gap' => NULL,
+        'use_mobile_arrow' => NULL,
+        'enable_accordian' => NULL,
+        'disable_quicklink_url' => NULL,
+        'mobile_background_color' => NULL,
+        'accordian_background_color' => NULL,
+        'mobile_arrow_color' => NULL,
+        'use_sticky' => NULL,
+        'hide_iframe_onload' => NULL,
+        'open_link_iniframe' => NULL,
+        'iframeid' => NULL,
+        'quicklink_toggle' => NULL,
+        'items' => NULL,
+        'quicklink_label_color' => NULL,
+        'quicklink_label_hover_color' => NULL,
+        'quicklink_background_color' => NULL,
+        'quicklink_shape_border_color' => NULL,
+        'quicklink_shape_background_color' => NULL,
+        'head_style' => NULL,
+        'dynamic_data_theme_id' => NULL,
+      ],
+      'template' => 'quick-link-block',
+    ],
+    'retailer_block' => [
+      'variables' => [
+        'title' => NULL,
+        'items' => NULL,
+      ],
+      'template' => 'retailer-block',
+    ],
+    'feeding_calculator' => [
+      'variables' => [
+        'items' => NULL,
+        'site_text' => NULL,
+        'widget_id' => NULL,
+        'data_token' => NULL,
+        'data_locale' => NULL,
+        'data_displaylanguage' => NULL,
+        'data_subid' => NULL,
+        'vendor' => NULL,
+      ],
+      'template' => 'feeding-calculator',
+    ],
+    'geoip_popup' => [
+      'variables' => [
+        'geoip_heading' => NULL,
+        'geoip_message' => NULL,
+        'geoip_button_link_text' => NULL,
+        'geoip_link_text' => NULL,
+        'geoip_footer_text' => NULL,
+        'show_geoip_footer_text' => NULL,
+        'use_language_selector' => NULL,
+        'language_items' => NULL,
+        'items' => NULL,
+        'show_brand_shape' => NULL,
+        'brand_shape' => NULL,
+      ],
+      'template' => 'geoip-popup',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_html(&$variables) {
+  $geoip_popup = Drupal::config('mars_common.geoip');
+  $geoip_popup2 = Drupal::config('mars_common.geoip')->get('newslettersetting.geoip');
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $variables['#cache']['tags'][] = 'config:mars_common.geoip';
+  if ($variables['is_admin'] || !$geoip_popup || !$geoip_popup2['enabled']) {
+    return;
+  }
+  $variables['#attached']['drupalSettings']['mars_common']['geoip_popup_enable'] = $geoip_popup2['enabled'];
+  $all_regions = $all_languages = [];
+  $brand_shape = FALSE;
+  if ($geoip_popup2['enabled']) {
+    $regions = [];
+    $host = '';
+    if (!empty($geoip_popup2['use_language_selector'])) {
+      $brand_shape = TRUE;
+      $all_languages = mars_common_get_country_language_links();
+      if (count($all_languages) <= 1) {
+        return;
+      }
+    }
+    else {
+      $terms = \Drupal::entityTypeManager()->getStorage("taxonomy_term")->loadTree("mars_regions", 0, NULL, TRUE);
+      if (!empty($terms)) {
+        foreach ($terms as $term) {
+          $site_url = $term->get('field_mars_url')->getValue()[0]['uri'];
+          $site_url = !empty($site_url) ? rtrim($site_url, "/") : '';
+          $regions['country_name'] = $term->getName();
+          $regions['country_code'] = $term->get('field_country_codes')->value;
+          $regions['country_icon_link'] = $term->get('field_country_icon_link')->value;
+          $regions['field_show_in_geo_ip_popup'] = $term->get('field_show_in_geo_ip_popup')->value;
+          $regions['site_url'] = $site_url;
+          $all_regions[] = $regions;
+        }
+        $items = [];
+        if (!empty($all_regions)) {
+          foreach ($all_regions as $region_image_val) {
+            if (!empty($region_image_val['field_show_in_geo_ip_popup']) && $region_image_val['field_show_in_geo_ip_popup'] == 1) {
+              $item = [
+                'country_image_name' => !empty($region_image_val['country_name']) ? $language_helper->translate($region_image_val['country_name']) : '',
+                'country_image_link' => !empty($region_image_val['site_url']) ? $region_image_val['site_url'] : '',
+                'country_image_url' => !empty($region_image_val['country_icon_link']) ? $region_image_val['country_icon_link'] : '',
+              ];
+              $items[] = $item;
+            }
+          }
+        }
+      }
+      $host = \Drupal::request()->getSchemeAndHttpHost();
+      $host = rtrim($host, "/");
+      $variables['#attached']['drupalSettings']['mars_common']['regions_taxonomy'] = $all_regions;
+    }
+    $variables['#attached']['drupalSettings']['mars_common']['host_name'] = $host;
+  }
+
+  $geoip_popup_render_array = [
+    '#theme' => 'geoip_popup',
+    '#geoip_heading' => !empty($geoip_popup2['geoip_heading']) ? $language_helper->translate($geoip_popup2['geoip_heading']) : '',
+    '#geoip_message' => !empty($geoip_popup2['geoip_message']) ? $language_helper->translate($geoip_popup2['geoip_message']) : '',
+    '#geoip_button_link_text' => !empty($geoip_popup2['geoip_button_link_text']) ? $language_helper->translate($geoip_popup2['geoip_button_link_text']) : '',
+    '#geoip_link_text' => !empty($geoip_popup2['geoip_link_text']) ? $language_helper->translate($geoip_popup2['geoip_link_text']) : '',
+    '#geoip_footer_text' => !empty($geoip_popup2['geoip_footer_text']) ? $language_helper->translate($geoip_popup2['geoip_footer_text']) : '',
+    '#show_geoip_footer_text' => $geoip_popup2['show_footer_text_on_popup'] ?? FALSE,
+    '#use_language_selector' => $geoip_popup2['use_language_selector'] ?? FALSE,
+    '#show_brand_shape' => $geoip_popup2['show_brand_shape'] ?? FALSE,
+    '#language_items' => $all_languages,
+    '#items' => $items,
+  ];
+  $theme_configurator_geo = Drupal::service('mars_common.theme_configurator_parser');
+  if ($brand_shape) {
+    $geoip_popup_render_array['#brand_shape'] = $theme_configurator_geo->getBrandShapeWithoutFill();
+  }
+  $geoip_visibility = $geoip_popup->get('visibility');
+
+  if ($theme_configurator_geo->getBlockVisibility($geoip_visibility)) {
+    $variables['page_bottom']['geoip_popup'] = $geoip_popup_render_array;
+  }
+}
+
+/**
+ * Implements hook_entity_operation().
+ */
+function mars_common_entity_operation_alter(array &$operations, EntityInterface $entity) {
+  if (!(\Drupal::currentUser()->hasPermission('administer polls'))) {
+    return;
+  }
+  $entityTypeId = $entity->getEntityTypeId();
+  if ($entityTypeId === 'poll') {
+    $operations['results'] = [
+      'title' => t('Results'),
+      'url' => Url::fromRoute('mars_common.poll.votes', ['poll' => $entity->id()]),
+      'weight' => 10,
+    ];
+  }
+}
+
+/**
+ * Prepares variables for carousel item widget templates.
+ *
+ * Default template: carousel-item-widget.html.twig.
+ *
+ * @param array $variables
+ *   An associative array containing:
+ *   - element: A render element representing the carousel item field widget.
+ */
+function mars_common_preprocess_file_text_item_widget(array &$variables) {
+  $element = $variables['element'];
+
+  $variables['attributes'] = [
+    'class' => [
+      'carousel-item-widget',
+      'js-form-managed-file',
+      'form-managed-file',
+      'clearfix',
+    ],
+  ];
+
+  $variables['data'] = [];
+  foreach (Element::children($element) as $child) {
+    $variables['data'][$child] = $element[$child];
+  }
+
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__media_carousel(array &$variables) {
+  $field_carousel_title = $variables['content']['field_carousel_title'];
+  $field_carousel_items = $variables['content']['field_carousel_items'];
+
+  /** @var \Drupal\mars_common\ThemeConfiguratorParser $themeParser */
+  $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+  $file_content = $themeParser->getBrandBorder();
+
+  $media_items = [];
+  foreach ($field_carousel_items as $item_key => $item_value) {
+    if (is_numeric($item_key)) {
+      $media_items[] = [
+        'src' => $item_value['#item_url']->getUri(),
+        'content' => $item_value['#item_description'],
+        'video' => ($item_value['#media_type'] == 'video'),
+        'image' => ($item_value['#media_type'] == 'image'),
+        'alt' => NULL,
+        'title' => NULL,
+      ];
+    }
+  }
+
+  $variables['title'] = $field_carousel_title['#items'][0]->value;
+  $variables['items'] = $media_items;
+  $variables['brand_borders'] = $file_content ?? '';
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__list(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  $field_list_items = $variables['content']['field_list_items_reference'];
+
+  $ol_items = [];
+  foreach ($field_list_items as $item_key => $item_value) {
+    if (is_numeric($item_key)) {
+
+      $item_block = $item_value['#options']['entity'];
+      $field_desc_val = $item_block->get('field_list_item_description')->value;
+      $field_item_order = $item_block->get('field_list_item_order')->value;
+
+      $item = [
+        'content' => $field_desc_val,
+        'item_number' => $field_item_order,
+      ];
+
+      if (!$item_block->get('field_list_item_image')->isEmpty()) {
+        $media_id = $item_block
+          ->get('field_list_item_image')
+          ->first()
+          ->target_id;
+
+        $media_params = $media_helper->getMediaParametersById($media_id);
+        if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+          $item['image'] = [
+            'src' => $media_params['src'],
+            'alt' => $media_params['alt'],
+            'title' => $media_params['title'],
+          ];
+        }
+      }
+
+      $ol_items[] = $item;
+    }
+  }
+
+  $variables['ol_items'] = $ol_items;
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__text_component(array &$variables) {
+  $field_body = $variables['content']['field_text_component_body'];
+  $variables['content'] = $field_body['#items'][0]->value;
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__inline_image(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  /** @var \Drupal\block_content\BlockContentInterface $block */
+  $block = $variables['content']['#block_content'];
+
+  if (!$block->get('field_inline_image_file')->isEmpty()) {
+    $media_id = $block
+      ->get('field_inline_image_file')
+      ->first()
+      ->target_id;
+
+    $media_params = $media_helper->getMediaParametersById($media_id);
+    if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+      $variables['image_src'] = $media_params['src'];
+      $variables['image_alt'] = $media_params['alt'];
+      $variables['image_title'] = $media_params['title'];
+    }
+  }
+
+  if (!$block->get('field_inline_image_svg_asset')->isEmpty()) {
+
+    /** @var \Drupal\mars_common\ThemeConfiguratorParser $themeParser */
+    $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+    $variables['shape_motif'] = $themeParser->getBrandShape();
+  }
+
+  if (!$block->get('field_inline_image_description')->isEmpty()) {
+    $variables['content'] = $block
+      ->get('field_inline_image_description')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_inline_image_title')->isEmpty()) {
+    $variables['title'] = $block
+      ->get('field_inline_image_title')
+      ->first()
+      ->value;
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__inline_video(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  /** @var \Drupal\block_content\BlockContentInterface $block */
+  $block = $variables['content']['#block_content'];
+
+  if (!$block->get('field_inline_video')->isEmpty()) {
+    $media_id = $block
+      ->get('field_inline_video')
+      ->first()
+      ->target_id;
+
+    $media_params = $media_helper->getMediaParametersById($media_id);
+    if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+      $variables['video_src'] = $media_params['src'];
+    }
+  }
+
+  if (!$block->get('field_inline_video_svg_asset')->isEmpty()) {
+
+    /** @var \Drupal\mars_common\ThemeConfiguratorParser $themeParser */
+    $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+    $variables['shape_motif'] = $themeParser->getBrandShape();
+  }
+
+  if (!$block->get('field_inline_video_description')->isEmpty()) {
+    $variables['content'] = $block
+      ->get('field_inline_video_description')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_inline_video_title')->isEmpty()) {
+    $variables['title'] = $block
+      ->get('field_inline_video_title')
+      ->first()
+      ->value;
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__full_width_image(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  /** @var \Drupal\block_content\BlockContentInterface $block */
+  $block = $variables['content']['#block_content'];
+
+  if (!$block->get('field_full_image_file')->isEmpty()) {
+    $media_id = $block
+      ->get('field_full_image_file')
+      ->first()
+      ->target_id;
+
+    $media_params = $media_helper->getMediaParametersById($media_id);
+    if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+      $variables['media']['image'] = TRUE;
+      $variables['media']['src'] = $media_params['src'];
+      $variables['media']['alt'] = $media_params['alt'];
+      $variables['media']['title'] = $media_params['title'];
+    }
+  }
+
+  if (!$block->get('field_full_image_svg_asset')->isEmpty()) {
+    $variables['shape_motif'] = (bool) $block
+      ->get('field_full_image_svg_asset')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_full_image_description')->isEmpty()) {
+    $variables['content'] = $block
+      ->get('field_full_image_description')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_full_image_title')->isEmpty()) {
+    $variables['heading'] = $block
+      ->get('field_full_image_title')
+      ->first()
+      ->value;
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__full_width_video(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  /** @var \Drupal\block_content\BlockContentInterface $block */
+  $block = $variables['content']['#block_content'];
+
+  if (!$block->get('field_full_video')->isEmpty()) {
+    $media_id = $block
+      ->get('field_full_video')
+      ->first()
+      ->target_id;
+
+    $media_params = $media_helper->getMediaParametersById($media_id);
+    if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+      $variables['media']['video'] = TRUE;
+      $variables['media']['src'] = $media_params['src'];
+    }
+  }
+
+  if (!$block->get('field_full_video_svg_asset')->isEmpty()) {
+    $variables['shape_motif'] = (bool) $block
+      ->get('field_full_video_svg_asset')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_full_video_description')->isEmpty()) {
+    $variables['content'] = $block
+      ->get('field_full_video_description')
+      ->first()
+      ->value;
+  }
+
+  if (!$block->get('field_full_video_title')->isEmpty()) {
+    $variables['heading'] = $block
+      ->get('field_full_video_title')
+      ->first()
+      ->value;
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block__inline_block__flexible_framer(array &$variables) {
+  /** @var \Drupal\mars_media\MediaHelper $media_helper */
+  $media_helper = \Drupal::service('mars_media.media_helper');
+
+  $field_ff_items = $variables['content']['field_ff_items_reference'];
+  $field_ff_title = $variables['content']['field_ff_title']['#items']->value;
+
+  $with_cta_flag = (bool) $variables['content']['field_ff_with_cta']['#items']->value;
+  $with_image_flag = (bool) $variables['content']['field_ff_with_image']['#items']->value;
+  $with_desc_flag = (bool) $variables['content']['field_ff_with_description']['#items']->value;
+
+  $ff_items = [];
+  foreach ($field_ff_items as $item_key => $item_value) {
+    if (is_numeric($item_key)) {
+
+      $item_block = $item_value['#options']['entity'];
+      $field_desc_val = $item_block->get('field_ff_item_description')->value;
+      $field_title_val = $item_block->get('field_ff_item_title')->value;
+      $field_cta_val = $item_block->get('field_ff_item_cta')->value;
+
+      $item = [
+        'card__heading' => $field_title_val,
+        'card__link__url' => ($with_cta_flag) ? $field_cta_val : NULL,
+        'card__link__text' => ($with_cta_flag) ? t('Explore') : NULL,
+        'card__body' => ($with_desc_flag) ? $field_desc_val : NULL,
+      ];
+
+      if ($with_image_flag && !$item_block->get('field_ff_item_image')->isEmpty()) {
+        $media_id = $item_block
+          ->get('field_ff_item_image')
+          ->first()
+          ->target_id;
+
+        $media_params = $media_helper->getMediaParametersById($media_id);
+        if (!($media_params['error'] ?? FALSE) && ($media_params['src'] ?? FALSE)) {
+          $item['card__image__src'] = $media_params['src'];
+          $item['card__image__alt'] = $media_params['alt'];
+          $item['card__image__title'] = $media_params['title'];
+        }
+      }
+
+      $ff_items[] = $item;
+    }
+  }
+  /** @var \Drupal\mars_common\ThemeConfiguratorParser $themeParser */
+  $themeParser = Drupal::service('mars_common.theme_configurator_parser');
+  $file_divider_content = $themeParser->getGraphicDivider();
+  $file_border_content = $themeParser->getBrandBorder2();
+
+  $variables['items'] = $ff_items;
+  $variables['grid_label'] = $field_ff_title;
+  $variables['grid_type'] = 'card';
+  $variables['item_type'] = 'card';
+  $variables['divider'] = $file_divider_content ?? NULL;
+  $variables['brand_borders'] = $file_border_content ?? NULL;
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__article__card(array &$variables) {
+  mars_common_card_add_badge_text($variables);
+  mars_common_card_add_button_label($variables, 'article_card_button');
+  mars_common_add_cache_by_label_config($variables);
+  $color_key = \Drupal::config(MarsCardColorSettingsForm::SETTINGS)->get('select_background_color_article');
+  mars_common_card_change_color($variables, $color_key);
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__article__teaser(array &$variables) {
+  mars_common_card_add_badge_text($variables);
+  mars_common_card_add_button_label($variables, 'article_card_button');
+  mars_common_add_cache_by_label_config($variables);
+  $color_key = \Drupal::config(MarsCardColorSettingsForm::SETTINGS)->get('select_background_color_article');
+  mars_common_card_change_color($variables, $color_key);
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__campaign__card(array &$variables) {
+  mars_common_card_add_badge_text($variables);
+  mars_common_card_add_button_label($variables, 'campaign_card_button');
+  mars_common_add_cache_by_label_config($variables);
+  $color_key = \Drupal::config(MarsCardColorSettingsForm::SETTINGS)->get('select_background_color_campaign');
+  mars_common_card_change_color($variables, $color_key);
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__landing_page__card(array &$variables) {
+  mars_common_card_add_badge_text($variables);
+  mars_common_card_add_button_label($variables, 'landing_card_button');
+  mars_common_add_cache_by_label_config($variables);
+  $variables['brand_shape'] = [
+    '#type' => 'inline_template',
+    '#template' => \Drupal::service('mars_common.theme_configurator_parser')->getBrandShapeWithoutFill(),
+  ];
+  $color_key = \Drupal::config(MarsCardColorSettingsForm::SETTINGS)->get('select_background_color_landing');
+  mars_common_card_change_color($variables, $color_key);
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__stories__card(array &$variables) {
+  // Get logo path.
+  $vs_logo = Drupal::config('mars_common.visual_story_settings')->get('general_settings.enable_logo');
+  $logo_settings = Drupal::config('emulsifymars.settings')->get('logo');
+  $variables['site_logo'] = '';
+  if (($logo_settings['path']) && ($vs_logo == 1 || is_null($vs_logo))) {
+    $variables['site_logo'] = \Drupal::service('file_url_generator')->generateAbsoluteString($logo_settings['path']);
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_block(array &$variables) {
+  if (isset($variables['plugin_id']) &&
+    $variables['plugin_id'] == 'poll_block' &&
+    isset($variables['configuration']['ajaxId'])) {
+
+    $variables['attributes']['data-ajax-block-id'] = $variables['configuration']['ajaxId'];
+  }
+  if (isset($variables['plugin_id']) && !empty($variables['content'])) {
+    if (($variables['plugin_id'] != 'header_block') && ($variables['plugin_id'] != 'footer_block')) {
+      mars_common_customize_block_field_links($variables['content']);
+    }
+  }
+  if (isset($variables['plugin_id']) &&
+  $variables['plugin_id'] == 'counter_block') {
+    $variables['#attached']['library'][] = 'mars_common/mars_common.mars_countdown';
+  }
+  if (isset($variables['plugin_id']) && $variables['plugin_id'] == 'freeform_story_block' && $variables['configuration']['media_item_type'] == 'enable_3D_asset' && !empty($variables['configuration']['asset_url_3D'])) {
+    $variables['#attached']['library'][] = 'mars_common/mars_common.freeform_story';
+  }
+  if (isset($variables['plugin_id']) && $variables['plugin_id'] == 'mars_newsletter_webform_block') {
+    if ($variables['elements']['#configuration']['select_display_tool'] === 'serving_size_calculator_tool') {
+      $node = \Drupal::routeMatch()->getParameter('node');
+
+      if (!empty($node) && $node instanceof NodeInterface && in_array($node->bundle(), PdpHeroBlock::CONTENT_TYPE_FOR_SERVING_SIZE_CALCULATOR)) {
+        if (isset($variables['content']['#webform_newsletter']['form']['elements']['specie_type'])) {
+          $specie_type_default = $variables['content']['#webform_newsletter']['form']['elements']['specie_type']['#default_value'];
+          $specie_type_default = array_filter(explode(PHP_EOL, str_replace("\r", "", $specie_type_default)));
+          $product_specie = ($node->hasField('field_product_specie') && !empty($node->get('field_product_specie')->getValue())) ? $node->get('field_product_specie')->getValue()[0]['target_id'] : '';
+          if (!empty($specie_type_default) && (!in_array($product_specie, $specie_type_default))) {
+            $variables['content'] = [];
+          }
+        }
+
+        if (isset($variables['content']['#webform_newsletter']['form']['elements']['food_type'])) {
+          $food_type_default = $variables['content']['#webform_newsletter']['form']['elements']['food_type']['#default_value'];
+          $food_type_default = array_filter(explode(PHP_EOL, str_replace("\r", "", $food_type_default)));
+          $product_food_type = ($node->hasField('field_food_type') && !empty($node->get('field_food_type')->getValue())) ? $node->get('field_food_type')->getValue()[0]['target_id'] : '';
+          if (!empty($food_type_default) && (!in_array($product_food_type, $food_type_default))) {
+            $variables['content'] = [];
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Removing language prefix in block field url links.
+ */
+function mars_common_customize_block_field_links(&$array) {
+  $all_hrefs = [];
+  $pathFilter = new OptimizePathFilter();
+  foreach ($array as $label => $content) {
+    if (!empty($content) && is_string($content)) {
+      // Getting all the href values from anchor tags.
+      if (preg_match_all('/<a\s+href=["\']([^"\']+)["\']/i', $content, $links, PREG_PATTERN_ORDER)) {
+        $all_hrefs = array_unique($links[1]);
+      }
+      if (!empty($all_hrefs)) {
+        $new_hrefs = [];
+        // Optimizing href with langcode and sub domain code.
+        foreach ($all_hrefs as $href) {
+          $new_hrefs[] = $pathFilter->optimizePath($href);
+        }
+        // Updating the new href values with old hrefs.
+        $array[$label] = str_replace($all_hrefs, $new_hrefs, $array[$label]);
+      }
+    }
+    elseif (!empty($content) && is_array($content)) {
+      mars_common_customize_block_field_links($array[$label]);
+    }
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_node__content_hub_page__card(array &$variables) {
+  mars_common_card_add_badge_text($variables);
+  mars_common_card_add_button_label($variables, 'content_hub_card_button');
+  mars_common_add_cache_by_label_config($variables);
+  $color_key = \Drupal::config(MarsCardColorSettingsForm::SETTINGS)->get('select_background_color_hub_card');
+  mars_common_card_change_color($variables, $color_key);
+}
+
+/**
+ * Add the configured badge text to cards.
+ *
+ * @param array $variables
+ *   Variables.
+ */
+function mars_common_card_add_badge_text(array &$variables) {
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $badge_text = \Drupal::config('mars_common.site_labels')->get('card_new_badge');
+  $variables['badge_text'] = $language_helper->translate($badge_text);
+}
+
+/**
+ * Add the specific configured button text to cards.
+ *
+ * @param array $variables
+ *   Variables.
+ * @param string $key
+ *   Config key value.
+ */
+function mars_common_card_add_button_label(array &$variables, string $key) {
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $config = \Drupal::config('mars_common.site_labels');
+  $variables['card_button_text'] = $language_helper->translate($config->get($key));
+}
+
+/**
+ * Add cache by label config.
+ *
+ * @param array $variables
+ *   Variables.
+ */
+function mars_common_add_cache_by_label_config(array &$variables) {
+  $config = \Drupal::config('mars_common.site_labels');
+  $cacheMetadata = CacheableMetadata::createFromRenderArray($variables);
+  $cacheMetadata->addCacheableDependency($config);
+  $cacheMetadata->applyTo($variables);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mars_common_form_node_campaign_edit_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  $form['form_help_text'] = mars_common_campaign_form_theme_config_help_text();
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mars_common_form_node_campaign_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  $form['form_help_text'] = mars_common_campaign_form_theme_config_help_text();
+}
+
+/**
+ * Returns a help text markup element.
+ *
+ * @return array
+ *   The markup element.
+ */
+function mars_common_campaign_form_theme_config_help_text() {
+  return [
+    '#type' => 'markup',
+    '#markup' => '<strong>Theme Configuration Override</strong><br/>To override the theme, add a "MARS: Theme Configuration Block" to the layout tab of this page.',
+    '#weight' => 19,
+  ];
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function mars_common_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  // Adding this to increase the char length of the sub path field.
+  if ((\Drupal::moduleHandler()->moduleExists('redirect_domain')) && ($form_id == "form_redirect_domain_form")) {
+    if (!empty($form['redirects'])) {
+      foreach ($form['redirects'] as $key => $val) {
+        if (is_int($key)) {
+          $form['redirects'][$key]['sub_path']['#maxlength'] = 2048;
+          $form['redirects'][$key]['destination']['#maxlength'] = 2048;
+        }
+      }
+    }
+  }
+  if (
+    $form_id === 'block_form' ||
+    $form_id === 'layout_builder_add_block' ||
+    $form_id === 'layout_builder_update_block'
+  ) {
+    $form['settings']['label']['#access'] = FALSE;
+    $form['settings']['label_display']['#access'] = FALSE;
+  }
+
+  // Alter layout form related to content type
+  // in order to add custom validation.
+  $form_object = $form_state->getFormObject();
+  if (
+    strpos($form_id, 'layout_builder_form') !== FALSE &&
+    ($form_object instanceof DefaultsEntityForm || $form_object instanceof OverridesEntityForm)
+  ) {
+
+    $entity = $form_state->getFormObject()->getEntity();
+
+    if ($form_alter_class = mars_common_get_layout_alter_class($entity)) {
+      $form_state->set('form_alter_class', $form_alter_class);
+      $form['#validate'][] = [$form_alter_class, 'validate'];
+    }
+  }
+  // Override Character limit in title field for Article.
+  $bundle = FALSE;
+  if ($form_object instanceof ContentEntityForm) {
+    $bundle = $form_object->getEntity()->bundle();
+  }
+  $bundle = !empty($entity) ? $entity->bundle() : '';
+  if ($bundle == 'article') {
+    $character_limit_config = \Drupal::config('mars_common.character_limit_page');
+    $form['title']['#maxlength'] = !empty($character_limit_config->get('content_type_component_article_title')) ? $character_limit_config->get('content_type_component_article_title') : 60;
+  }
+
+  if ($form_id == "juicer_io_feed_delete_form") {
+    $current_feed = FALSE;
+    $entity = $form_state->getFormObject()->getEntity();
+    $feed_id = $entity ? $entity->id() : '';
+    $nids = \Drupal::entityQuery('node')->accessCheck(TRUE)->condition('type', 'homepage')->execute();
+    if ($nids) {
+      $nodes = \Drupal::entityTypeManager()->getStorage('node')->loadMultiple($nids);
+      foreach ($nodes as $node) {
+        $layout = $node->layout_builder__layout;
+        if (!empty($layout)) {
+          foreach ($layout->getSections() as $section) {
+            foreach ($section->getComponents() as $component) {
+              $block_config = $component->get('configuration');
+              if ($component->getPluginId() === 'social_feed') {
+                if ($block_config['feed'] == $feed_id) {
+                  $current_feed = TRUE;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if ($current_feed) {
+      $markup = '<h4>This feed id is being used in Social feed block and cannot be deleted. Please remove this feed id from the block first.</h4>';
+      $form['description']['#markup'] = $markup;
+      $form['actions']['submit']['#disabled'] = TRUE;
+    }
+  }
+
+  if ($form['#form_id'] === 'layout_builder_add_block' || $form['#form_id'] === 'layout_builder_update_block') {
+    /** @var \Drupal\layout_builder\Form\ConfigureBlockFormBase $formObject */
+    $formObject = $form_state->getFormObject();
+
+    $blockPluginId = $formObject
+      ->getCurrentComponent()
+      ->getPluginId();
+
+    $bundle = FALSE;
+
+    $element_id = Drupal::config('mars_common.element_id')->get('element_id.custom_id');
+    $block_permission = $element_id['block_restrictions'][$blockPluginId];
+
+    if ($block_permission == 1) {
+      $component = $formObject->getCurrentComponent();
+      $form['actions']['#weight'] = 100;
+      $form['elemet_id'] = [
+        '#type' => 'textfield',
+        '#title' => t('Element Id'),
+        '#required' => FALSE,
+        '#weight' => 90,
+      ];
+      $form['elemet_id']['#default_value'] = $component->get('block_element_id');
+      array_unshift($form['#submit'], 'mars_common_submit_block_form');
+    }
+    else {
+      $component = $formObject->getCurrentComponent();
+      $form['actions']['#weight'] = 100;
+      $form['elemet_id'] = [
+        '#type' => 'hidden',
+        '#title' => t('Element Id'),
+        '#required' => FALSE,
+        '#weight' => 90,
+      ];
+      $form['elemet_id']['#default_value'] = '';
+      array_unshift($form['#submit'], 'mars_common_submit_block_form');
+    }
+  }
+}
+
+/**
+ * Custom submit handler for submitting LB block forms.
+ *
+ * Persists the configured block style to the component configuration data,
+ * which is later persisted to section storage by layout builder's base form.
+ */
+function mars_common_submit_block_form(array $form, FormStateInterface $formState) {
+  /** @var \Drupal\layout_builder\Form\ConfigureBlockFormBase $formObject */
+  $formObject = $formState->getFormObject();
+  $component = $formObject->getCurrentComponent();
+  $component->set('block_element_id', $formState->getValue('elemet_id'));
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Modify the configuration form for layout builder sections (layouts).
+ */
+function mars_common_form_layout_builder_configure_section_alter(&$form, FormStateInterface $form_state, $form_id) {
+
+  $formObject = $form_state->getFormObject();
+  $layout_id = $formObject->getLayout()->getPluginId();
+  if ($layout_id == 'flexible_framer' || $layout_id == 'mars_layout_twocol') {
+    $config = $formObject->getLayout()->getConfiguration();
+    $form['bg_color'] = [
+      '#type' => 'jquery_colorpicker',
+      '#title' => t('Background Color'),
+      '#attributes' => ['class' => ['show-clear']],
+      '#default_value' => $config['bg_color'] ?? NULL,
+      '#weight' => 0,
+    ];
+    if ($layout_id == 'flexible_framer') {
+      $form['bg_color']['#description'] = t('<p style="color: #ffffff;">This color will be applicable for Flexible framer if BG color is set to Other and cleared.</p>');
+    }
+
+    // Our submit handler must execute before the default one, because the
+    // default handler stores the section & component data in the tempstore
+    // and we need to update those objects before that happens.
+    array_unshift($form['#submit'], 'mars_common_layout_builder_submit_section_form');
+  }
+
+}
+
+/**
+ * Custom submit handler for submitting LB section forms.
+ *
+ * This is used to persist the selected style to the layout configuration
+ * array, which layout builder's ConfigureSectionForm will persist to section
+ * storage.
+ */
+function mars_common_layout_builder_submit_section_form(array $form, FormStateInterface $formState) {
+  $formObject = $formState->getFormObject();
+  $config = $formObject->getLayout()->getConfiguration();
+  if (!$config) {
+    $config = [];
+  }
+  $values = $formState->getValues();
+  $config['bg_color'] = $values['bg_color'];
+
+  $formObject
+    ->getLayout()
+    ->setConfiguration($config);
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mars_common_preprocess_layout(&$variables) {
+
+  $color = array_key_exists('bg_color', $variables['settings']) ? $variables['settings']['bg_color'] : " ";
+  if (isset($color) && !empty($color)) {
+    $variables['bg_layout_color']['attributes'] = "style=" . "background-color:" . $color;
+  }
+}
+
+/**
+ * Implements hook_webform_element_alter().
+ */
+function mars_common_webform_element_alter(array &$element, FormStateInterface $form_state, array $context) {
+  // Check for desired element.
+  if (isset($element['#webform_id'])) {
+    $element['#element_validate'][] = [
+      'Drupal\mars_common\Validate\MarsValidateConstraint',
+      'validate',
+    ];
+    if (array_key_exists('g-recaptcha-response', $form_state->getUserInput())) {
+      $grecaptcha = $form_state->getUserInput()['g-recaptcha-response'];
+    }
+    if ($element['#webform_key'] === 'captcha' && isset($grecaptcha) && empty($grecaptcha)) {
+      $element['#suffix'] = '<span class="validation-error">required</span>';
+      $element['#attributes']['class'][] = 'error';
+    }
+  }
+}
+
+/**
+ * Callback function to delete status messages in the poll submit function.
+ */
+function mars_common_poll_form_submit_action_callback() {
+  $msg = \Drupal::messenger();
+  $msg->deleteByType('status');
+}
+
+/**
+ * Returns Layout Form Alter class based on Drupal entity.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   Drupal entity.
+ *
+ * @todo Move this function to a Mars Common service method.
+ *
+ * @return string
+ *   Class name.
+ */
+function mars_common_get_layout_alter_class(EntityInterface $entity): ?string {
+  $original_id = NULL;
+  if ($entity instanceof Node) {
+    $original_id = 'node.' . $entity->bundle() . '.default';
+  }
+  elseif ($entity instanceof LayoutEntityDisplayInterface) {
+    $original_id = $entity->getOriginalId();
+  }
+
+  switch ($original_id) {
+    case 'node.faq_contact.default':
+      return ContactHelpLayoutFormAlter::class;
+
+    case 'node.newsletter_sign_up.default':
+      return NewsletterSignUpLayoutFormAlter::class;
+
+    case 'node.where_to_buy.default':
+      return WhereToBuyLayoutFormAlter::class;
+
+    case 'node.recipe.full':
+    case 'node.recipe.default':
+      return RecipeLayoutFormAlter::class;
+
+    case 'node.homepage.default':
+      return HomepageLayoutFormAlter::class;
+
+    case 'node.article.default':
+      return ArticleLayoutFormAlter::class;
+
+    case 'node.product.default':
+    case 'node.product_multipack.default':
+      return ProductLayoutFormAlter::class;
+
+    case 'node.landing_page.default':
+    case 'node.landing_page.full':
+      return LandingPageLayoutFormAlter::class;
+
+    case 'node.about_page.default':
+    case 'node.about_page.full':
+      return AboutPageLayoutFormAlter::class;
+
+    case 'node.content_hub_page.default':
+      return ContentHubPageLayoutFormAlter::class;
+
+    case 'node.search.default':
+      return SearchLayoutFormAlter::class;
+
+    case 'node.campaign.default':
+      return CampaignLayoutFormAlter::class;
+
+    default:
+      return NULL;
+  }
+
+}
+
+/**
+ * Change feedback form according to type.
+ */
+function _mars_common_feedback_ajax_callback(&$form, FormStateInterface $form_state) {
+  $form_state->setRebuild();
+  return $form;
+}
+
+/**
+ * Clear render cache.
+ */
+function _mars_common_render_cache_clear() {
+  foreach (Cache::getBins() as $service_id => $cache_backend) {
+    if ($service_id === 'render') {
+      $cache_backend->deleteAll();
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_insert().
+ */
+function mars_common_menu_link_content_insert(EntityInterface $entity) {
+  if ($entity->get('menu_name')->value == MenuConstants::MAIN_MENU_ID) {
+    _mars_common_render_cache_clear();
+  }
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function mars_common_menu_link_content_update(EntityInterface $entity) {
+  if ($entity->get('menu_name')->value == MenuConstants::MAIN_MENU_ID) {
+    _mars_common_render_cache_clear();
+  }
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function mars_common_menu_link_content_delete(EntityInterface $entity) {
+  if ($entity->get('menu_name')->value == MenuConstants::MAIN_MENU_ID) {
+    _mars_common_render_cache_clear();
+  }
+}
+
+/**
+ * Validate menu links against limit.
+ *
+ * @param \Drupal\menu_link_content\Entity\MenuLinkContent $entity
+ *   MenuLinkContent entity for review.
+ * @param string $menu
+ *   The Menu name.
+ * @param int $limit
+ *   Max amount of menu links.
+ */
+function _mars_common_menu_link_count_validation(MenuLinkContent $entity, string $menu, int $limit) {
+  if ($entity->isNew() ||
+  (
+    $entity->get('menu_name')->value !== $menu ||
+    $entity->get('parent')->value !== NULL)
+  ) {
+    $menu_tree_params = new MenuTreeParameters();
+    $menu_tree_params->setMaxDepth(1);
+    $menu_tree = \Drupal::menuTree()->load($menu, $menu_tree_params);
+    if (count($menu_tree) >= $limit) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+/**
+ * Add custom validation to menu link form.
+ *
+ * @param array $form
+ *   Render array of the form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   Form state.
+ */
+function _mars_common_form_menu_link_content_menu_link_content_form_validate(array &$form, FormStateInterface $form_state) {
+  $entity = $form_state->getFormObject()->getEntity();
+  $form_values = $form_state->getValues();
+  $form_values_parent_menu = substr($form_values['menu_parent'], 0, -1);
+  if ($form_values_parent_menu === MenuConstants::MAIN_MENU_ID) {
+    if (!_mars_common_menu_link_count_validation($entity, $form_values_parent_menu, MenuConstants::MAIN_MENU_ITEM_COUNT_LIMIT)) {
+      $form_state->setErrorByName(
+        'menu_parent',
+        t(
+          'The maximum top level menu count of <b>@menu</b> is <b>@max_count</b>.',
+          [
+            '@menu' => '<Main navigation>',
+            '@max_count' => MenuConstants::MAIN_MENU_ITEM_COUNT_LIMIT,
+          ]
+        )
+      );
+    }
+  }
+  elseif ($form_values_parent_menu === MenuConstants::TOP_FOOTER_MENU_ID) {
+    if (!_mars_common_menu_link_count_validation($entity, $form_values_parent_menu, MenuConstants::TOP_FOOTER_MENU_ITEM_COUNT_LIMIT)) {
+      $form_state->setErrorByName(
+        'menu_parent',
+        t(
+          'The maximum top level menu count of <b>@menu</b> is <b>@max_count</b>.',
+          [
+            '@menu' => '<Top footer navigation>',
+            '@max_count' => MenuConstants::TOP_FOOTER_MENU_ITEM_COUNT_LIMIT,
+          ]
+        )
+      );
+    }
+  }
+  elseif ($form_values_parent_menu === MenuConstants::LEGAL_MENU_ID) {
+    if (!_mars_common_menu_link_count_validation($entity, $form_values_parent_menu, MenuConstants::LEGAL_MENU_ITEM_COUNT_LIMIT)) {
+      $form_state->setErrorByName(
+        'menu_parent',
+        t(
+          'The maximum top level menu count of <b>@menu</b> is <b>@max_count</b>.',
+          [
+            '@menu' => '<Legal links menu>',
+            '@max_count' => MenuConstants::LEGAL_MENU_ITEM_COUNT_LIMIT,
+          ]
+        )
+      );
+    }
+  }
+}
+
+/**
+ * Menu link form alter.
+ *
+ * @param array $form
+ *   Render array of the form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   Form state.
+ */
+function mars_common_form_menu_link_content_menu_link_content_form_alter(array &$form, FormStateInterface $form_state) {
+  $form['title']['widget'][0]['value']['#maxlength'] = MenuConstants::DEFAULT_CHARACTER_COUNT_LIMIT;
+  $form['#validate'][] = '_mars_common_form_menu_link_content_menu_link_content_form_validate';
+  $form['#prefix'] = '<div id="menu-link-form-content-wrapper">';
+  $form['#suffix'] = '</div>';
+
+  $form_input = $form_state->getUserInput();
+  $menu_parent = $form_input['menu_parent'] ?? $form['menu_parent']['#default_value'];
+  if (substr($menu_parent, 0, -1) === MenuConstants::MAIN_MENU_ID) {
+    $form['title']['widget'][0]['value']['#maxlength'] = MenuConstants::MAIN_MENU_ITEM_CHARACTER_COUNT_LIMIT;
+    $form['title']['widget'][0]['value']['#description'] .= ' Be sure the items you add do not cause the navigation to extend past one line.';
+  }
+  elseif (substr($menu_parent, 0, -1) === MenuConstants::LEGAL_MENU_ID) {
+    $form['title']['widget'][0]['value']['#maxlength'] = MenuConstants::LEGAL_MENU_ITEM_CHARACTER_COUNT_LIMIT;
+  }
+  elseif (substr($menu_parent, 0, -1) === MenuConstants::TOP_FOOTER_MENU_ID) {
+    $form['title']['widget'][0]['value']['#maxlength'] = MenuConstants::TOP_FOOTER_MENU_ITEM_CHARACTER_COUNT_LIMIT;
+  }
+  elseif (substr($menu_parent, 0, -1) === MenuConstants::TOP_HEADER_MENU_ID) {
+    $form['title']['widget'][0]['value']['#maxlength'] = MenuConstants::TOP_HEADER_MENU_ITEM_CHARACTER_COUNT_LIMIT;
+  }
+  $form['menu_parent']['#ajax'] = [
+    'disable-refocus' => FALSE,
+    'event' => 'change',
+    'wrapper' => 'menu-link-form-content-wrapper',
+    'progress' => [
+      'type' => 'throbber',
+    ],
+  ];
+}
+
+/**
+ * Validate "main menu" edit form.
+ *
+ * @param array $form
+ *   Render array of the form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   Form state.
+ */
+function _mars_common_form_menu_edit_form_validate(array &$form, FormStateInterface $form_state) {
+  $menu_tree_params = new MenuTreeParameters();
+  $menu_tree_params->setMaxDepth(1);
+  $menu_tree = \Drupal::menuTree()->load(MenuConstants::MAIN_MENU_ID, $menu_tree_params);
+  $form_values = $form_state->getValues();
+  $menu_tree_root_items_count = 0;
+  foreach ($form_values['links'] as $link) {
+    if (!$link['parent']) {
+      $menu_tree_root_items_count++;
+    }
+  }
+
+  if ($menu_tree_root_items_count > MenuConstants::MAIN_MENU_ITEM_COUNT_LIMIT && $menu_tree_root_items_count != count($menu_tree)) {
+    $form_state->setErrorByName('links', t(
+      'The maximum top level menu count of <b>@menu</b> is <b>@max_count</b>.',
+      [
+        '@menu' => '<Main navigation>',
+        '@max_count' => MenuConstants::MAIN_MENU_ITEM_COUNT_LIMIT,
+      ]
+    ));
+
+    // @todo find a proper fix.
+    /*
+     * Upon validation error, the form should show the invalid state in which it
+     * was submitted. In this case because of tabledrag behavior, upon
+     * validation error the form will look like as if it's in its initial state,
+     * but in reality the hidden parent and weight fields will contain the
+     * invalid state.
+     *
+     * We are resetting those fields to their default values so the
+     * visible state and the actual hidden input state are equal. This has to be
+     * done manually as an invalid form is not rebuilt by the form builder even
+     * if we set it to do so.
+     *
+     * The proper fix would be to properly change the visibly rendered table to
+     * reflect the posted values, but currently it's done based on the actually
+     * saved menu structure and the posted values are not used at all.
+     */
+    foreach ($form['links']['links'] as &$link_form) {
+      if (is_array($link_form)) {
+        if (
+          isset($link_form['parent']['#value'], $link_form['parent']['#default_value'])
+        ) {
+          $link_form['parent']['#value'] = $link_form['parent']['#default_value'];
+        }
+        if (
+          isset($link_form['weight']['#value'], $link_form['weight']['#default_value'])
+        ) {
+          $link_form['weight']['#value'] = $link_form['weight']['#default_value'];
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mars_common_form_menu_edit_form_alter(array &$form, FormStateInterface $form_state) {
+  $entity = $form_state->getFormObject()->getEntity();
+  if ($entity && $entity->id() === MenuConstants::MAIN_MENU_ID) {
+    $form_state->setCached(FALSE);
+    $form['#validate'][] = '_mars_common_form_menu_edit_form_validate';
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mars_common_form_poll_form_alter(
+  &$form,
+  FormStateInterface $form_state,
+  $form_id
+) {
+  $userInput = &$form_state->getUserInput();
+  $fieldTypeValue = $userInput['field_type'] ?? $form['field_type']['widget']['#default_value'];
+  $form['#prefix'] = '<div id="poll-form-content-wrapper">';
+  $form['#suffix'] = '</div>';
+
+  if ($fieldTypeValue === 'poll') {
+    $form['choice']['widget']['#cardinality'] = FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED;
+  }
+  elseif ($fieldTypeValue === 'feedback') {
+    $form['choice']['widget']['#cardinality'] = 2;
+    if (!isset($form['choice']['widget'][1])) {
+      $form['choice']['widget'][1] = $form['choice']['widget'][0];
+      $form['choice']['widget']['#max_delta'] = 1;
+    }
+
+    if (empty($form['choice']['widget'][0]['choice']['#default_value'])) {
+      $form['choice']['widget'][0]['choice']['#default_value'] = 'YES';
+      $form['choice']['widget'][0]['choice']['#required'] = TRUE;
+    }
+
+    if (empty($form['choice']['widget'][1]['choice']['#default_value'])) {
+      $form['choice']['widget'][1]['choice']['#default_value'] = 'NO';
+      $form['choice']['widget'][1]['choice']['#required'] = TRUE;
+    }
+
+    foreach ($form['choice']['widget'] as $choiceIndex => $choice) {
+
+      // Leave alone not numbered keys, those are not choices.
+      if (!is_int($choiceIndex)) {
+        continue;
+      }
+
+      // Remove extra choices.
+      if ($choiceIndex > 1) {
+        unset($form['choice']['widget'][$choiceIndex]);
+        continue;
+      }
+
+      // Remove the empty values so the default value will be used.
+      if (
+        isset($userInput['choice'][$choiceIndex]['choice']) &&
+        $userInput['choice'][$choiceIndex]['choice'] === ''
+      ) {
+        unset($userInput['choice'][$choiceIndex]);
+      }
+    }
+
+    // Update field state with new item count.
+    $fieldName = $form['choice']['widget']['#field_name'];
+    $parents = [];
+    $field_state = WidgetBase::getWidgetState(
+      $parents,
+      $fieldName,
+      $form_state
+    );
+    $field_state['items_count'] = 2;
+    WidgetBase::setWidgetState($parents, $fieldName, $form_state, $field_state);
+  }
+
+  $form['field_type']['widget']['#ajax'] =
+    [
+      'callback' => '_mars_common_feedback_ajax_callback',
+      'disable-refocus' => FALSE,
+      'event' => 'change',
+      'wrapper' => 'poll-form-content-wrapper',
+      'progress' => [
+        'type' => 'throbber',
+      ],
+    ];
+
+  $form['question']['widget'][0]['value']['#title'] = 'Title';
+  if (empty($form['question']['widget'][0]['value']['#default_value'])) {
+    $mars_config = \Drupal::configFactory()
+      ->getEditable('mars_common.system.site');
+    $form['question']['widget'][0]['value']['#default_value'] = t('Thank you for visiting @brand!', ['@brand' => $mars_config->get('brand')]);
+  }
+  $form['question']['widget'][0]['value']['#maxlength'] = 55;
+  $form['choice']['widget']['#title'] = 'Responses';
+  $form['anonymous_vote_allow']['widget']['value']['#default_value'] = 1;
+
+  $form['choice']['widget']['add_more']['#states'] = [
+    'visible' => [
+      ':input[name="field_type"]' => ['value' => 'poll'],
+    ],
+  ];
+
+  $form['group_feedback_variations']['#states'] = [
+    'expanded' => [
+      ':input[name="field_type"]' => ['value' => 'feedback'],
+    ],
+  ];
+
+  $form['group_poll_options']['#states'] = [
+    'expanded' => [
+      ':input[name="field_type"]' => ['value' => 'poll'],
+    ],
+  ];
+}
+
+/**
+ * Implements preprocess_HOOK().
+ */
+function mars_common_preprocess_page(&$variables) {
+  $current_route = Drupal::routeMatch();
+  $route_name = $current_route->getRouteName();
+
+  if ($route_name === 'system.403' ||
+    $route_name === 'system.404') {
+    $node = Drupal::entityTypeManager()->getStorage('node')->loadByProperties(['type' => 'error_page']);
+    if ($node) {
+      $variables['node'] = $node[key($node)];
+    }
+  }
+}
+
+/**
+ * Implements hook_field_widget_form_alter().
+ */
+function mars_common_field_widget_form_alter(
+  &$element,
+  FormStateInterface $form_state,
+  $context
+) {
+  $plugin_id = $context['widget']->getPluginId();
+  $field_name = $context['items']->getName();
+
+  // Apply for titles:
+  $applied_titles = [
+    'field_ff_item_title',
+    'field_inline_image_title',
+    'field_inline_video_title',
+    'field_full_image_title',
+    'field_full_video_title',
+    'field_carousel_title',
+  ];
+  if (in_array($field_name, $applied_titles)) {
+    $element['value']['#maxlength'] = 55;
+  }
+  if ($field_name === 'field_ff_item_description') {
+    $element['value']['#maxlength'] = 160;
+  }
+
+  // Character Limit config.
+  $character_limit_config = \Drupal::config('mars_common.character_limit_page');
+
+  if ($field_name == 'field_product_description') {
+    $element['#maxlength'] = !empty($character_limit_config->get('content_type_component_product_description')) ? $character_limit_config->get('content_type_component_product_description') : 300;
+  }
+  if ($field_name == 'field_recipe_description') {
+    // Checking new lines for validating maxlength.
+    $input_desc_val = $form_state->getUserInput()['field_recipe_description'][0]['value'];
+    $new_line_count = substr_count($input_desc_val, "\n");
+    $element['#maxlength'] = !empty($character_limit_config->get('content_type_component_recipe_description'))
+      ? $character_limit_config->get('content_type_component_recipe_description') + $new_line_count
+      : 255 + $new_line_count;
+  }
+
+  // Increasing Article title limit.
+  $bundle = FALSE;
+  $form_object = $form_state->getFormObject();
+  if ($form_object instanceof ContentEntityForm) {
+    $bundle = $form_object->getEntity()->bundle();
+  }
+  if (!empty($bundle) && $bundle == 'article' && $field_name == 'title') {
+    $element['value']['#maxlength'] = !empty($character_limit_config->get('content_type_component_article_title')) ? $character_limit_config->get('content_type_component_article_title') : 60;
+  }
+
+  if ($plugin_id === 'poll_choice_default' && $field_name === 'choice') {
+    $element['choice']['#size'] = 40;
+    $element['choice']['#maxlength'] = 25;
+  }
+
+  $form_id = $form_state->getFormObject()->getFormId();
+  $form_array = [
+    'node_error_page_edit_form',
+    'node_error_page_form',
+  ];
+  if (in_array($form_id, $form_array) && $field_name == 'title') {
+    $element['value']['#maxlength'] = 15;
+    $element['value']['#default_value'] = $element['value']['#default_value'] ?? t('Oops');
+  }
+  if (in_array($form_id, $form_array) && $field_name == 'body') {
+    $element['#maxlength'] = !empty($character_limit_config->get('content_type_component_error_page_body')) ? $character_limit_config->get('content_type_component_error_page_body') : 100;
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter().
+ */
+function mars_common_theme_suggestions_block_alter(array &$suggestions, array $variables) {
+  $content = $variables['elements']['content'];
+  if (isset($content['#block_content'])
+    and $content['#block_content'] instanceof BlockContentInterface) {
+    $block_type_suggestion = 'block__block_content_' . $content['#block_content']->bundle();
+    // Taking care of observed duplication of block__block_content.
+    $suggestions_rev = array_reverse($suggestions);
+    $index = array_search('block__block_content', $suggestions_rev);
+    if (is_numeric($index)) {
+      array_splice($suggestions_rev, $index, 0, $block_type_suggestion);
+      $suggestions = array_reverse($suggestions_rev);
+    }
+    else {
+      $suggestions[] = $block_type_suggestion;
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ */
+function mars_common_entity_type_alter(array &$entity_types) {
+  foreach ($entity_types as $entity_type) {
+    $constraints = $entity_type->getConstraints();
+    unset($constraints['EntityUntranslatableFields']);
+    $entity_type->setConstraints($constraints);
+  }
+}
+
+/**
+ * Implements hook_element_info_alter().
+ */
+function mars_common_element_info_alter(array &$info) {
+  if (isset($info['inline_entity_form'])) {
+    $info['inline_entity_form']['#process'][] = 'mars_common_include_ief_entities';
+  }
+  if (isset($info['captcha'])) {
+    $info['captcha']['#process'][] = 'mars_common_custom_recaptcha_process';
+    // $info['captcha']['#captcha_validate'] = 'recaptcha_v3_validate';
+  }
+}
+
+/**
+ * Unset captcha default js library.
+ */
+function mars_common_custom_recaptcha_process($element) {
+  if (isset($element['captcha_widgets']['recaptcha_widget'])) {
+    unset($element['captcha_widgets']['recaptcha_widget']['#attached']);
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_library_info_alter().
+ */
+function mars_common_library_info_alter(&$libraries, $extension) {
+  if (isset($libraries['drupal.autocomplete']['js']['assets/vendor/jquery.ui/ui/widget-min.js'])) {
+    $libraries['drupal.autocomplete']['js']['assets/vendor/jquery.ui/ui/widget-min.js']['weight'] = -11.90;
+  }
+  if (strpos($extension, 'recaptcha') !== FALSE) {
+    unset($libraries["google.recaptcha"]);
+  }
+}
+
+/**
+ * Implements hook_field_widget_multivalue_inline_entity_form_complex_form_alter().
+ */
+function mars_common_field_widget_multivalue_inline_entity_form_complex_form_alter(array &$elements, FormStateInterface $form_state, array $context) {
+  if (isset($elements['form']['inline_entity_form'])) {
+    $elements['form']['inline_entity_form']['#process'][] = 'mars_common_include_ief_entities';
+  }
+}
+
+/**
+ * Implements hook_entity_base_field_info_alter().
+ */
+function mars_common_entity_base_field_info_alter(&$fields, EntityTypeInterface $entity_type) {
+  foreach ($fields as $field) {
+    if ($fields[$field->getName()]->getConstraint('UniqueField') !== NULL) {
+      $fields[$field->getName()]->addConstraint('MarsCommonInlineEntityFormUniqueField');
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_bundle_field_info_alter().
+ */
+function mars_common_entity_bundle_field_info_alter(&$fields, EntityTypeInterface $entity_type, $bundle) {
+  foreach ($fields as $field) {
+    if ($field->getName() == 'field_list_item_order') {
+      $fields[$field->getName()]->addConstraint('RegExValidationConstraint', [
+        'regex' => '/^\d{0,2}\.{0,1}\d{0,2}$/i',
+        'errorMessage' => 'Please enter correct order number. Example: 1.1 or 1.',
+      ]);
+    }
+
+    if ($fields[$field->getName()]->getConstraint('UniqueField') !== NULL) {
+      $fields[$field->getName()]->addConstraint('MarsCommonInlineEntityFormUniqueField');
+    }
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter().
+ */
+function mars_common_theme_suggestions_poll_vote_alter(array &$suggestions, array $variables) {
+  if ((isset($variables['form']['#entity']->field_type) && $variables['form']['#entity']->field_type->value == 'feedback')
+    || (isset($variables['poll']) && $variables['poll']->field_type->value == 'feedback')) {
+    $suggestions[] = 'poll_vote__feedback';
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter().
+ */
+function mars_common_theme_suggestions_poll_results_alter(array &$suggestions, array $variables) {
+  if ((isset($variables['form']['#entity']->field_type) && $variables['form']['#entity']->field_type->value == 'feedback')
+    || (isset($variables['poll']) && $variables['poll']->field_type->value == 'feedback')) {
+    $suggestions[] = 'poll_results__feedback';
+  }
+}
+
+/**
+ * Implements hook_taxonomy_term_presave().
+ */
+function mars_common_taxonomy_term_presave(TermInterface $term) {
+  if ($term->bundle() == FooterBlock::VID_TAXONOMY_REGION) {
+    $terms = \Drupal::service('entity_type.manager')->getStorage('taxonomy_term')->loadByProperties([
+      'vid' => FooterBlock::VID_TAXONOMY_REGION,
+      'field_default_region' => TRUE,
+    ]);
+
+    if ($term->field_default_region->value) {
+      foreach ($terms as $term_item) {
+        /** @var \Drupal\taxonomy\TermInterface $term_item */
+        if ($term_item->id() != $term->id()) {
+          $term_item->set('field_default_region', FALSE);
+          $term_item->save();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_node_presave().
+ */
+function mars_common_node_presave(NodeInterface $node) {
+  $is_pn_profile = mars_common_is_pn_profile();
+  // Filter tags in field_product_ingredients field.
+  if ($node->bundle() == 'product_variant' && !empty($node->get('field_product_ingredients')->value)) {
+    $value = strip_tags(html_entity_decode($node->get('field_product_ingredients')->value), '<strong><b><br>');
+    $node->get('field_product_ingredients')
+      ->setValue($value);
+  }
+  if ($is_pn_profile && $node->bundle() == 'article') {
+    $ref_ids = [];
+    $specie_references = $node->get('field_product_specie');
+    foreach ($specie_references as $specie_reference) {
+      $ref_ids[] = $specie_reference->get('entity')->getTargetIdentifier();
+    }
+    $node->set('field_pnus_specie', $ref_ids);
+  }
+}
+
+/**
+ * Implements hook_page_attachments().
+ */
+function mars_common_page_attachments(&$page) {
+  $page['#attached']['library'][] = 'mars_common/mars_common.focal_point';
+  $current_route = Drupal::routeMatch();
+  $route_name = $current_route->getRouteName();
+  $supported_routes = [
+    'layout_builder.overrides.node.view',
+    'layout_builder.defaults.node.view',
+  ];
+  if (in_array($route_name, $supported_routes)) {
+    $page['#attached']['library'][] = 'mars_common/mars_common.dialog_fix';
+  }
+
+  $node = $current_route->getParameter('node');
+  if (!empty($node) && $node instanceof NodeInterface) {
+    $show_rating_and_reviews = \Drupal::config(BazaarvoiceConfigForm::SETTINGS)->get('show_rating_and_reviews');
+    if ($show_rating_and_reviews) {
+      $page['#attached']['library'][] = 'mars_product/mars_product.bazaarvoice';
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function mars_common_entity_delete(EntityInterface $entity) {
+  if ($entity instanceof TermInterface && $entity->bundle() == FooterBlock::VID_TAXONOMY_REGION) {
+    $tags = [FooterBlock::CUSTOM_CACHE_TAG];
+    Cache::invalidateTags($tags);
+  }
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function mars_common_entity_update(EntityInterface $entity) {
+  $page_level_theme_config = \Drupal::configFactory()->getEditable('mars_common.page_level_theme_override');
+  $theme_override_content_type = !empty($page_level_theme_config->get('page_level_content_type')) ? $page_level_theme_config->get('page_level_content_type') : ['recipe'];
+  if ($entity instanceof TermInterface && $entity->bundle() == FooterBlock::VID_TAXONOMY_REGION) {
+    $tags = [FooterBlock::CUSTOM_CACHE_TAG];
+    Cache::invalidateTags($tags);
+  }
+  if (!empty($theme_override_content_type) && in_array($entity->bundle(), $theme_override_content_type)) {
+    $theme_configurations_block_config = [];
+    if (!empty($entity->id())) {
+      $region = 'content';
+      $generator = \Drupal::service('uuid');
+      $destination_layout = $entity->get('layout_builder__layout')->getValue();
+      $campaign_page_theme_configurator_component = [];
+      $current_page_node_id = '';
+      if (!empty($destination_layout)) {
+        foreach ($destination_layout as $section) {
+          if (isset($section['section']) && $section['section']->getLayoutId() === 'campaign_page_theme_configurator') {
+            $components = $section['section']->getComponents();
+            if (!empty($components)) {
+              foreach ($components as $component) {
+                $campaign_page_theme_configurator_component[] = $component->getPluginId();
+                if ($component instanceof SectionComponent && $component->getPluginId() === 'theme_override_block') {
+                  $theme_override_block_config = $component->get('configuration');
+                  $theme_configurations_block_config = $theme_override_block_config['theme_override_configuration'];
+                  $current_page_node_id = $theme_override_block_config['current_page_node_id'];
+                  $theme_override_block_config['theme_override_configuration'] = [];
+                  $theme_override_block_config['current_page_node_id'] = '';
+                  $component->setConfiguration($theme_override_block_config);
+                }
+              }
+            }
+          }
+        }
+        if (!empty($theme_configurations_block_config) && !empty($campaign_page_theme_configurator_component) && $entity->id() === $current_page_node_id) {
+          foreach ($destination_layout as $section) {
+            if (isset($section['section']) && $section['section']->getLayoutId() === 'campaign_page_theme_configurator') {
+              $components = $section['section']->getComponents();
+              if (!empty($components)) {
+                foreach ($components as $component) {
+                  if (in_array('theme_configuration_block', $campaign_page_theme_configurator_component)) {
+                    if ($component instanceof SectionComponent && $component->getPluginId() === 'theme_configuration_block') {
+                      $component->setConfiguration($theme_configurations_block_config);
+                    }
+                  }
+                  else {
+                    $theme_configuration_block_component = new SectionComponent($generator->generate(), $region, $theme_configurations_block_config);
+                    $section['section']->appendComponent($theme_configuration_block_component);
+                  }
+                }
+              }
+            }
+          }
+          $entity->set('layout_builder__layout', $destination_layout);
+          $entity->save();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_create().
+ */
+function mars_common_entity_create(EntityInterface $entity) {
+  if ($entity instanceof TermInterface && $entity->bundle() == FooterBlock::VID_TAXONOMY_REGION) {
+    $tags = [FooterBlock::CUSTOM_CACHE_TAG];
+    Cache::invalidateTags($tags);
+  }
+}
+
+/**
+ * Include entities list for validation.
+ *
+ * @param array $entity_form
+ *   Entity form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   Form state.
+ * @param array $complete_form
+ *   Complete form.
+ *
+ * @return array
+ *   Updated entity form.
+ */
+function mars_common_include_ief_entities(array $entity_form, FormStateInterface $form_state, array &$complete_form) {
+  if (isset($entity_form['#entity']) && isset($entity_form['#ief_id'])) {
+    // PHP array_map function needs second param as an array.
+    // Fixed issue of null parameter in array map function.
+    // https://www.php.net/manual/en/function.array-map.php
+    if (is_array($form_state->get([
+      'inline_entity_form',
+      $entity_form['#ief_id'],
+      'entities',
+    ]))) {
+      $entity_form['#entity']->_inline_entity_form_entities = array_map(function ($element) {
+        return $element['entity'];
+      }, $form_state->get([
+        'inline_entity_form',
+        $entity_form['#ief_id'],
+        'entities',
+      ]));
+    }
+  }
+
+  return $entity_form;
+}
+
+/**
+ * Implements hook_pathauto_punctuation_chars_alter().
+ */
+function mars_common_pathauto_punctuation_chars_alter(array &$punctuation) {
+  // Add the trademark, copyright symbols.
+  $punctuation['trademark'] = ['value' => '™', 'name' => t('Trademark symbol')];
+  $punctuation['registered_trademark'] = [
+    'value' => '®',
+    'name' => t('Registered trademark symbol'),
+  ];
+  $punctuation['copyright'] = ['value' => '©', 'name' => t('Copyright symbol')];
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mars_common_form_social_media_admin_form_alter(&$form, FormStateInterface $form_state) {
+  $social_medias = SocialMediaConstants::SOCIAL_MEDIAS;
+  $limitation_tooltip_text = t('You must disable one of the enabled social medias to enable a new one!');
+
+  $form['#prefix'] = '<div id="social-media-wrapper">';
+  $form['#suffix'] = '</div>';
+
+  $values = $form_state->getValues();
+  $social_media_enabled_count = 0;
+  foreach ($social_medias as $social_media) {
+    $form[$social_media][$social_media . '_enable']['#ajax'] = [
+      'callback' => '_mars_common_social_media_enabled_ajax_callback',
+      'wrapper' => 'social-media-wrapper',
+      'event' => 'change',
+    ];
+    $value = $values[$social_media . '_enable'] ?? $form[$social_media][$social_media . '_enable']['#default_value'];
+    if ($value) {
+      $social_media_enabled_count++;
+    }
+    else {
+      $form[$social_media][$social_media . '_enable']['#default_value'] = FALSE;
+    }
+  }
+
+  $i = 0;
+  foreach ($social_medias as $social_media) {
+    $value = $values[$social_media . '_enable'] ?? $form[$social_media][$social_media . '_enable']['#default_value'];
+    $is_external_link = preg_grep('/^http/', $form[$social_media][$social_media . '_api_url']);
+    if ($social_media_enabled_count > SocialMediaConstants::SOCIAL_MEDIAS_ENABLED_MAXIMUM - 1) {
+      if ($value) {
+        $i++;
+        if ($i > SocialMediaConstants::SOCIAL_MEDIAS_ENABLED_MAXIMUM) {
+          if (!empty($is_external_link)) {
+            $form[$social_media][$social_media . '_enable']['#disabled'] = TRUE;
+            $form[$social_media][$social_media . '_enable']['#description'] = $limitation_tooltip_text;
+            $form_state->setValue($social_media . '_enable', FALSE);
+            $form[$social_media][$social_media . '_enable']['#default_value'] = FALSE;
+          }
+        }
+      }
+      else {
+        if (!empty($is_external_link)) {
+          $form[$social_media][$social_media . '_enable']['#disabled'] = TRUE;
+          $form[$social_media][$social_media . '_enable']['#description'] = $limitation_tooltip_text;
+          $form_state->setValue($social_media . '_enable', FALSE);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Ajax callback for social media enabled checkbox change events.
+ *
+ * @param array $form
+ *   The current form.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The current form state.
+ *
+ * @return array
+ *   The updated form.
+ */
+function _mars_common_social_media_enabled_ajax_callback(array &$form, FormStateInterface $form_state) {
+  $form_state->setRebuild();
+  return $form;
+}
+
+/**
+ * Card change color.
+ */
+function mars_common_card_change_color(&$variables, $color_key) {
+  $background_color = '';
+  if ($color_key != 'default' &&
+    !empty($color_key) &&
+    array_key_exists($color_key, MarsCardColorSettingsForm::$colorVariables)
+  ) {
+    $background_color = $color_key;
+  }
+  $conf = \Drupal::config(MarsCardColorSettingsForm::SETTINGS);
+  $cacheMetadata = CacheableMetadata::createFromRenderArray($variables);
+  $cacheMetadata->addCacheableDependency($conf);
+  $cacheMetadata->applyTo($variables);
+
+  $variables['select_background_color'] = $background_color;
+}
+
+/**
+ * Implements hook_language_switch_links_alter().
+ */
+function mars_common_language_switch_links_alter(array &$links, $type, Url $url) {
+  if (\Drupal::currentUser()->isAnonymous()) {
+    $languages = \Drupal::languageManager()->getLanguages();
+    $disable_languages = \Drupal::config('mars_common.disable_language');
+    foreach ($languages as $language) {
+      if ($disable_languages->get($language->getId()) == TRUE) {
+        if (isset($links[$language->getId()])) {
+          unset($links[$language->getId()]);
+        }
+      }
+    }
+  }
+
+}
+
+/**
+ * Implements hook_mail_alter().
+ */
+function mars_common_mail_alter(&$message) {
+  $html = '';
+  $emails_configuration_original = \Drupal::configFactory()->get(MarsEmailsConfigurationForm::SETTINGS);
+  $languages = \Drupal::languageManager()->getLanguages();
+  if (!empty($languages)) {
+    $emails_configuration_translation = \Drupal::languageManager()->getLanguageConfigOverride($message["langcode"], MarsEmailsConfigurationForm::SETTINGS);
+  }
+
+  if (isset($message["id"]) &&
+    isset($message["key"]) &&
+    $message["key"] == 'email' &&
+    $message["id"] == 'mars_recipe_email') {
+    $recipe_from = $emails_configuration_translation->get('recipe_from')
+      ?: $emails_configuration_original->get('recipe_from');
+    $recipe_subject = $emails_configuration_translation->get('recipe_subject')
+      ?: $emails_configuration_original->get('recipe_subject');
+    $recipe_body = $emails_configuration_translation->get('recipe_body')
+      ?: $emails_configuration_original->get('recipe_body');
+    $recipe_signature = $emails_configuration_translation->get('recipe_signature')
+      ?: $emails_configuration_original->get('recipe_signature');
+
+    if (!empty($recipe_body)) {
+      $html .= $recipe_body;
+      $html .= "\r\n";
+    }
+    $html .= $message["params"]["recipe_url"];
+    if (!empty($recipe_signature)) {
+      $html .= "\r\n";
+      $html .= $recipe_signature;
+    }
+
+    // Prepare render array.
+    $render = ['#markup' => Markup::create($html)];
+    $message["from"] = $recipe_from;
+    $message["subject"] = $recipe_subject;
+    $message["body"] = $render;
+    $message['headers']['Content-Type'] = 'text/html; charset=UTF-8; format=flowed';
+  }
+  elseif (isset($message["id"]) &&
+    isset($message["key"]) &&
+    $message["key"] == 'grocery' &&
+    $message["id"] == 'mars_recipe_grocery') {
+    $grocery_list_from = $emails_configuration_translation->get('grocery_list_from')
+      ?: $emails_configuration_original->get('grocery_list_from');
+    $grocery_list_subject = $emails_configuration_translation->get('grocery_list_subject')
+      ?: $emails_configuration_original->get('grocery_list_subject');
+    $grocery_list_body = $emails_configuration_translation->get('grocery_list_body')
+      ?: $emails_configuration_original->get('grocery_list_body');
+    $grocery_list_signature = $emails_configuration_translation->get('grocery_list_signature')
+      ?: $emails_configuration_original->get('grocery_list_signature');
+
+    if (!empty($grocery_list_body)) {
+      $html .= $grocery_list_body;
+      $html .= "\r\n";
+    }
+    $ingredients = $message["params"]["ingredients"];
+    if (!empty($ingredients) && is_array($ingredients)) {
+      foreach ($ingredients as $ingredient) {
+        $html .= $ingredient['value'];
+        $html .= "<br />";
+      }
+    }
+    if (!empty($grocery_list_signature)) {
+      $html .= "\r\n";
+      $html .= $grocery_list_signature;
+    }
+    // Prepare render array.
+    $render = ['#markup' => Markup::create($html)];
+    if (!empty($grocery_list_from)) {
+      $message["from"] = $grocery_list_from;
+    }
+    $message["subject"] = $grocery_list_subject;
+    $message["body"] = $render;
+    $message['headers']['Content-Type'] = 'text/html; charset=UTF-8; format=flowed';
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for jquery_colorpicker templates.
+ */
+function mars_common_preprocess_jquery_colorpicker(&$vars) {
+  if (!empty($vars['attributes']['class']) && in_array('show-clear', $vars['attributes']['class'])) {
+    $vars['show_clear'] = TRUE;
+  }
+}
+
+/**
+ * Get current language prefix from the url.
+ */
+function mars_common_get_current_language_prefix() {
+  $language_prefixes = \Drupal::config('language.negotiation')->get('url.prefixes');
+  $langcode = \Drupal::languageManager()->getCurrentLanguage(LanguageInterface::TYPE_URL)->getId();
+  $lang_prefix = $language_prefixes[$langcode];
+
+  return $lang_prefix;
+}
+
+/**
+ * Get active language codes.
+ */
+function mars_common_get_lang_codes() {
+  $language_prefixes = \Drupal::config('language.negotiation')->get('url.prefixes');
+  $langcodes = \Drupal::languageManager()->getLanguages();
+  $langcodesList = array_keys($langcodes);
+  $lang_codes = [];
+  foreach ($langcodesList as $lcode) {
+    $lang_codes[] = $language_prefixes[$lcode];
+  }
+
+  return $lang_codes;
+}
+
+/**
+ * Get active profile.
+ */
+function mars_common_is_pn_profile() {
+  $profile = \Drupal::service('config.factory')->get('core.extension')->get('profile');
+  if (mb_strtolower($profile) == mb_strtolower('pet_nutrition')) {
+    $isProfile = 1;
+  }
+  else {
+    $isProfile = 0;
+  }
+  return $isProfile;
+}
+
+/**
+ * Check if fiscare_site feature is active in profile.
+ */
+function mars_common_is_fishcare_split_enabled() {
+  $fishcare_split = \Drupal::service('config.factory')->get('config_split.config_split.fishcare_site');
+  return $fishcare_split ? $fishcare_split->get('status') : FALSE;
+}
+
+/**
+ * Get country language links.
+ */
+function mars_common_get_country_language_links() {
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $languageManager = $language_helper->getLanguageManager();
+  $current_root_match = \Drupal::service('current_route_match');
+  $node_storage = \Drupal::service('entity_type.manager')->getStorage('node');
+  $render_links = $current_language_array = [];
+  $derivative_id = LanguageInterface::TYPE_URL;
+
+  $current_language = $languageManager->getCurrentLanguage($derivative_id)->getId();
+  $default_language = $languageManager->getDefaultLanguage()->getId();
+
+  if (str_contains($current_language, '-')) {
+    $current_language_array = explode('-', $current_language);
+  }
+  if (empty($current_language_array[1])) {
+    return $render_links;
+  }
+
+  $links = $languageManager->getLanguageSwitchLinks($derivative_id, Url::fromRouteMatch($current_root_match))->links;
+  if (!empty($links)) {
+    ksort($links);
+  }
+
+  if (isset($links[$current_language])) {
+    $links[$current_language]['url'] = Url::fromRoute('<front>');
+    $links[$current_language]['selected'] = TRUE;
+  }
+  if (isset($links[$default_language])) {
+    $links = [$default_language => $links[$default_language]] + $links;
+  }
+
+  if (!empty($links) && !empty($current_language_array[1])) {
+    foreach ($links as $link_key => $link_data) {
+      $link_key_array = [];
+      if (str_contains($link_key, '-')) {
+        $link_key_array = explode('-', $link_key);
+      }
+      if (isset($link_key_array[1]) && !empty($link_key_array[1]) && ($link_key_array[1] == $current_language_array[1])) {
+        $language_values = $link_data['language'];
+        // Multilang site toggle to current page.
+        $node = $current_root_match->getParameter('node');
+        if ($node instanceof NodeInterface) {
+          $nid = $node->id();
+          if ($nid) {
+            $node_values = $node_storage->load($nid);
+            $translate_entity = $node_values->hasTranslation($language_values->id());
+            if ($translate_entity) {
+              $url = Url::fromRoute('<current>', [], ['language' => $link_data['language']]);
+            }
+            else {
+              $url = Url::fromRoute('<front>', [], ['language' => $link_data['language']]);
+            }
+          }
+        }
+        else {
+          $url = Url::fromRoute('<front>', [], ['language' => $link_data['language']]);
+        }
+        $title = $link_data['title'];
+        if (strpos($link_data['title'], '(')) {
+          $link_data_title = $link_data['title'];
+          $title = trim(substr($link_data_title, 0, strpos($link_data_title, '(')));
+        }
+
+        $render_links[] = [
+          'title' => $language_helper->translate($title),
+          'abbr' => mb_strtoupper($link_key),
+          'url' => $url,
+          'current_lang' => ($link_key == $current_language) ? $current_language : '',
+          'selected' => $link_data['selected'] ?? FALSE,
+        ];
+      }
+    }
+  }
+  return $render_links;
+}
+
+/**
+ * Get language code based on campaign.
+ */
+function mars_common_get_language_code_campaign() {
+  $item = '';
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $languageManager = $language_helper->getLanguageManager();
+  $derivative_id = LanguageInterface::TYPE_URL;
+  $current_language = $languageManager->getCurrentLanguage($derivative_id)->getId();
+  if (!empty($current_language)) {
+    if (str_contains($current_language, '-')) {
+      $current_language_array = explode('-', $current_language);
+      $item = (isset($current_language_array[0]) && !empty($current_language_array[0])) ? $current_language_array[0] : '';
+      return $item;
+    }
+    else {
+      return $current_language;
+    }
+  }
+  return $item;
+}
+
+/**
+ * Get country code based on campaign.
+ */
+function mars_common_get_country_code_campaign() {
+  $item = '';
+  $language_helper = \Drupal::service('mars_common.language_helper');
+  $languageManager = $language_helper->getLanguageManager();
+  $derivative_id = LanguageInterface::TYPE_URL;
+  $current_language = $languageManager->getCurrentLanguage($derivative_id)->getId();
+  if (!empty($current_language)) {
+    if (str_contains($current_language, '-')) {
+      $current_language_array = explode('-', $current_language);
+      $item = (isset($current_language_array[1]) && !empty($current_language_array[1])) ? $current_language_array[1] : '';
+      return $item;
+    }
+  }
+  return $item;
+}
+
+/**
+ * Changing claims benefit field from string(plain text) to text(formatted).
+ */
+function mars_common_update_100151() {
+  $database = \Drupal::database();
+  $entityType = 'node';
+  $fieldName = 'field_nutritional_claims_benefit';
+  $table = $entityType . '__' . $fieldName;
+  $currentRows = NULL;
+  $newFieldsList = [];
+  $fieldStorage = FieldStorageConfig::loadByName($entityType, $fieldName);
+
+  if (is_null($fieldStorage)) {
+    return;
+  }
+
+  // Get all current data from DB.
+  if ($database->schema()->tableExists($table)) {
+    // The table data to restore after the update is completed.
+    $currentRows = $database->select($table, 'n')
+      ->fields('n')
+      ->execute()
+      ->fetchAll();
+  }
+
+  // Use existing field config for new field.
+  foreach ($fieldStorage->getBundles() as $bundle => $label) {
+    $field = FieldConfig::loadByName($entityType, $bundle, $fieldName);
+    $newField = $field->toArray();
+    $newField['field_type'] = 'text_long';
+    $newField['settings'] = [];
+    $newFieldsList[] = $newField;
+  }
+
+  // Deleting field storage which will also delete bundles(fields).
+  $newFieldStorage = $fieldStorage->toArray();
+  $newFieldStorage['type'] = 'text_long';
+  $newFieldStorage['settings'] = [];
+
+  $fieldStorage->delete();
+
+  // Purge field data now to allow new field and field_storage with same name
+  // to be created.
+  field_purge_batch(40);
+
+  // Create new field storage.
+  $newFieldStorage = FieldStorageConfig::create($newFieldStorage);
+  $newFieldStorage->save();
+
+  // Create new fields.
+  foreach ($newFieldsList as $nfield) {
+    $nfieldConfig = FieldConfig::create($nfield);
+    $nfieldConfig->save();
+  }
+
+  // Restore existing data in new table.
+  if (!is_null($currentRows)) {
+    foreach ($currentRows as $row) {
+      $database->insert($table)
+        ->fields((array) $row)
+        ->execute();
+    }
+  }
+}
+
+/**
+ * Get current url.
+ */
+function mars_common_get_current_url() {
+  $current_url = '';
+  $current_url_route = Url::fromRoute('<current>');
+  $current_url = $current_url_route->toString();
+  return $current_url;
+}
+
+/**
+ * Get Slow query urls.
+ */
+function mars_common_get_slow_query_urls() {
+  $slow_query_urls_arr = [];
+  $site_config = \Drupal::configFactory()->get('mars_common.system.site');
+  $slow_query_urls = $site_config->get('slow_query_url');
+  if (isset($slow_query_urls) && !empty($slow_query_urls)) {
+    $slow_query_urls_arr = explode(',', $slow_query_urls);
+  }
+  return $slow_query_urls_arr;
+}
+
+/**
+ * Css value.
+ */
+function mars_common_block_style($block_build_config) {
+  /* Text block */
+  $block_styles = '';
+  $config_color = Drupal::config('emulsifymars.settings');
+  $media_helper = \Drupal::service('mars_media.media_helper');
+  if ($block_build_config['id'] == 'text_block') {
+    $block_styles .= sprintf(" --c-text_override_color: %s;", $block_build_config["text_color_override"]);
+    $block_styles .= sprintf(" --c-text_background_color: %s;", $block_build_config["text_bg_color_override"]);
+  }
+  /* Freeform story block */
+  if ($block_build_config['id'] == 'freeform_story_block') {
+    if (!empty($block_build_config["custom_background_color"]) && $block_build_config['use_custom_color'] == TRUE) {
+      $block_styles .= sprintf(' --c-freeform-story-background-color: %s;', $block_build_config["custom_background_color"]);
+    }
+    $freeform_story_cta_background = $config_color->get('color_b');
+    $freeform_story_cta_text = $config_color->get('color_e');
+    if ((bool) $block_build_config['cta_bg_text'] === TRUE) {
+      $freeform_story_cta_background = !empty($block_build_config['cta_background']) ? $block_build_config['cta_background'] : $config_color->get('color_b');
+      $freeform_story_cta_text = !empty($block_build_config['cta_text_color']) ? $block_build_config['cta_text_color'] : $config_color->get('color_e');
+    }
+    $block_styles .= sprintf(' --c-freeform-story-cta-text-color: %s;', $freeform_story_cta_text);
+    $block_styles .= sprintf(' --c-freeform-story-cta-background-color: %s;', $freeform_story_cta_background);
+    if (!empty($block_build_config['override_bullet_points']) && !empty($block_build_config['icon'])) {
+      $fileUrlGenerator = \Drupal::service('file_url_generator');
+      $iconMediaId = $media_helper->getIdFromEntityBrowserSelectValue($block_build_config['icon']);
+      $iconParams = $media_helper->getMediaParametersById($iconMediaId);
+      if (!($iconParams['error'] ?? FALSE) && ($iconParams['src'] ?? FALSE)) {
+        $icon_url = $fileUrlGenerator->generateAbsoluteString($iconParams['src']);
+        if (strpos($icon_url, 'svg') !== FALSE) {
+          $icon_path = DRUPAL_ROOT . $icon_url;
+          $svg = SVG::createFromFile($icon_path, '');
+          $icon_color_pattern = $block_build_config['icon_color_override'] ? $block_build_config['icon_color_override'] : '';
+          $icon_bg_color_pattern = $block_build_config['icon_bg_color_override'] ? $block_build_config['icon_bg_color_override'] : '';
+          $svg_data = FreeformStoryBlock::convertSvgToBase64WithFill($svg, $icon_bg_color_pattern, $icon_color_pattern);
+          if (!empty($svg_data)) {
+            $block_styles .= sprintf(' --v-ff-icon: %s;', 'url(' . $svg_data . ')');
+          }
+          else {
+            $block_styles .= sprintf(' --v-ff-icon: %s;', 'url()');
+          }
+          if (!empty($icon_color_pattern)) {
+            $block_styles .= sprintf(' --v-svg-icon-color: %s;', 'url(' . $icon_color_pattern . ')');
+          }
+          if (!empty($icon_bg_color_pattern)) {
+            $block_styles .= sprintf(' --v-svg-bg-icon-color: %s;', 'url(' . $icon_bg_color_pattern . ')');
+          }
+        }
+      }
+    }
+  }
+  /* newsletter block */
+  if ($block_build_config['id'] == 'mars_newsletter_webform_block') {
+    $primary_color = $config_color->get('color_b');
+    $scratch_card_cursor = $block_build_config['scratch_cursor'];
+    if (!empty($scratch_card_cursor)) {
+      $scmedia_id = $media_helper->getIdFromEntityBrowserSelectValue($scratch_card_cursor);
+      $scmedia_params = $media_helper->getMediaUriById($scmedia_id);
+      if (!($scmedia_params['error'] ?? FALSE) && ($scmedia_params['src'] ?? FALSE)) {
+        $scratch_card_cursor_src = (string) $scmedia_params['src'];
+      }
+      $block_styles .= sprintf(" --c-scratch_card_cursor: %s;", $scratch_card_cursor_src);
+    }
+    if (!empty($primary_color)) {
+      $block_styles .= sprintf(" --c-bcs_bci_calculate_button_color: %s;", $primary_color);
+      $block_styles .= sprintf(" --c-range_thumb: %s;", $primary_color);
+    }
+    if (!empty($block_build_config['cookie_validation_message_color']) && $block_build_config['cookie_validation'] == TRUE) {
+      $block_styles .= sprintf(" --c-cookie-validation-message-color: %s;", $block_build_config['cookie_validation_message_color']);
+    }
+    if (!empty($block_build_config['background_color']) && $block_build_config['use_background_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-footer_news_letter_bg_color: %s;", $block_build_config['background_color']);
+    }
+    if (!empty($block_build_config['newsletter_label_text_color']) && $block_build_config['use_newsletter_text_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-footer_newsletter_label_text_color: %s;", $block_build_config['newsletter_label_text_color']);
+    }
+    if (!empty($block_build_config['newsletter_input_text_color']) && $block_build_config['use_newsletter_text_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-footer_newsletter_input_text_color: %s;", $block_build_config['newsletter_input_text_color']);
+    }
+    if (!empty($block_build_config['background_color_tool']) && $block_build_config['use_background_color_tool'] == TRUE) {
+      $block_styles .= sprintf(" --c-bcs_bci_background_color: %s;", $block_build_config['background_color_tool']);
+    }
+    if (!empty($block_build_config['tool_text_color']) && $block_build_config['use_text_color_tool'] == TRUE) {
+      $block_styles .= sprintf(" --c-bcs_bci_text_color: %s;", $block_build_config['tool_text_color']);
+    }
+    if (!empty($block_build_config['cta_color']) && $block_build_config['use_cta_tool'] == TRUE) {
+      $block_styles .= sprintf(" --c-bcs_bci_cta_color: %s;", $block_build_config['cta_color']);
+    }
+    if (!empty($block_build_config['gamification_title_color'])) {
+      $block_styles .= sprintf(" --c-gamification_title_color: %s;", $block_build_config['gamification_title_color']);
+    }
+    if (!empty($block_build_config['gamification_description_color'])) {
+      $block_styles .= sprintf(" --c-gamification_description_color: %s;", $block_build_config['gamification_description_color']);
+    }
+    if (!empty($block_build_config['spin_pointer_color'])) {
+      $block_styles .= sprintf(" --c-spin_pointer_color: %s;", $block_build_config['spin_pointer_color']);
+    }
+    if (!empty($block_build_config['result_symbol_color']) && $block_build_config['result_symbol'] == TRUE) {
+      $block_styles .= sprintf(" --c-bcs_bci_result_symbol_color: %s;", $block_build_config['result_symbol_color']);
+    }
+    if (!empty($block_build_config['calculator_title_color'])) {
+      $block_styles .= sprintf(" --c-calculator_title_color: %s;", $block_build_config['calculator_title_color']);
+    }
+    if (!empty($block_build_config['calculator_description_color'])) {
+      $block_styles .= sprintf(" --c-calculator_description_color: %s;", $block_build_config['calculator_description_color']);
+    }
+    if (!empty($block_build_config['calculator_bg_color'])) {
+      $block_styles .= sprintf(" --c-calculator_bg_color: %s;", $block_build_config['calculator_bg_color']);
+    }
+    if (!empty($block_build_config['calculator_label_text_color']) && $block_build_config['use_calculator_text_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-calculator_label_text_color: %s;", $block_build_config['calculator_label_text_color']);
+    }
+    if (!empty($block_build_config['calculator_input_text_color']) && $block_build_config['use_calculator_text_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-calculator_input_text_color: %s;", $block_build_config['calculator_input_text_color']);
+    }
+    if (!empty($block_build_config['calculator_result_bg_color']) && $block_build_config['use_calculator_result_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-calculator_result_bg_color: %s;", $block_build_config['calculator_result_bg_color']);
+    }
+    if (!empty($block_build_config['calculator_result_text_color']) && $block_build_config['use_calculator_result_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-calculator_result_text_color: %s;", $block_build_config['calculator_result_text_color']);
+    }
+    if (!empty($block_build_config['calculator_result_number_color']) && $block_build_config['use_calculator_result_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-calculator_result_number_color: %s;", $block_build_config['calculator_result_number_color']);
+    }
+  }
+  if ($block_build_config['id'] == 'back_to_top') {
+    // Back to top color config.
+    if (!empty($block_build_config['background_color'])) {
+      $block_styles .= sprintf(" --c-backtotop-background-color: %s;", $block_build_config['background_color']);
+    }
+
+    if (!empty($block_build_config['arrow_color'])) {
+      $block_styles .= sprintf(" --c-backtotop-arrow-color: %s;", $block_build_config['arrow_color']);
+    }
+  }
+  if ($block_build_config['id'] == 'accessibility_tool') {
+    if (!empty($block_build_config['enable_accessibility_tool'])) {
+      $block_styles .= sprintf(" --c-accesibility-tool-background-color: %s;", $block_build_config['background_color']);
+    }
+  }
+  /* Text Accordion block */
+  if ($block_build_config['id'] == 'text_accordion_block') {
+    if (!empty($block_build_config["bg_color"])) {
+      $block_styles .= sprintf(" --c-bg-color: %s;", $block_build_config["bg_color"]);
+    }
+    if (!empty($block_build_config["accordion_heading_color"])) {
+      $block_styles .= sprintf(" --c-accordion-heading-color-override: %s;", $block_build_config["accordion_heading_color"]);
+    }
+    if (!empty($block_build_config["accordion_title_color"])) {
+      $block_styles .= sprintf(' --c-accordion-title-color-override: %s;', $block_build_config["accordion_title_color"]);
+    }
+    if (!empty($block_build_config["accordion_desc_color"])) {
+      $block_styles .= sprintf(' --c-accordion-desc-color-override: %s;', $block_build_config["accordion_desc_color"]);
+    }
+    if (!empty($block_build_config["accordion_background_color"])) {
+      $block_styles .= sprintf(' --c-accordion-bg-color: %s;', $block_build_config["accordion_background_color"]);
+    }
+  }
+  /* FullWidth Carousal block */
+  if ($block_build_config['id'] == 'full_width_carousel_block') {
+    if ($block_build_config['cta_bg_text'] === 1 && !empty($block_build_config['cta_background'])) {
+      $block_styles .= sprintf(" --c-fullwidth-carousel-cta-background-color: %s;", $block_build_config['cta_background']);
+    }
+    else {
+      $block_styles .= sprintf(" --c-fullwidth-carousel-cta-background-color: %s;", $config_color->get('color_b'));
+    }
+    if ($block_build_config['cta_bg_text'] === 1 && !empty($block_build_config['cta_text_color'])) {
+      $block_styles .= sprintf(" --c-fullwidth-carousel-cta-text-color: %s;", $block_build_config['cta_text_color']);
+    }
+    else {
+      $block_styles .= sprintf(" --c-fullwidth-carousel-cta-text-color: %s;", $config_color->get('color_e'));
+    }
+    if (!empty($block_build_config['description_read_more_color'])) {
+      $block_styles .= sprintf(' --c-fullwidth_carousel_read_more_color: %s;', $block_build_config['description_read_more_color']);
+    }
+    if (!empty($block_build_config['use_background_color']) && !empty($block_build_config['background_color'])) {
+      $block_styles .= sprintf(' --c-fullwidth_carousel_background_color: %s;', $block_build_config['background_color']);
+    }
+  }
+  /* VerticalFullWidth block */
+  if ($block_build_config['id'] == 'vertical_full_width_carousel_block') {
+    $font_picker = !empty($block_build_config['extra_features']['color']['font_color']) ? $block_build_config['extra_features']['color']['font_color'] : $config_color->get('color_a');
+    if (isset($font_picker) && !empty($block_build_config['extra_features']['color']['font_color'])) {
+      $block_styles .= sprintf(" --c-vertical_fullwidth_carousel_font_color: %s;", $font_picker);
+    }
+    $background_color_picker = !empty($block_build_config['extra_features']['color']['background_color']) ? $block_build_config['extra_features']['color']['background_color'] : $config_color->get('color_e');
+    if (isset($background_color_picker) && !empty($block_build_config['extra_features']['color']['background_color'])) {
+      $block_styles .= sprintf(" --c-vertical_fullwidth_carousel_background_color: %s;", $background_color_picker);
+    }
+    $fullwidth_carousel_cta_background = !empty($block_build_config['extra_features']['color']['cta_background']) ? $block_build_config['extra_features']['color']['cta_background'] : $config_color->get('color_b');
+    if (isset($fullwidth_carousel_cta_background) && !empty($block_build_config['extra_features']['color']['cta_background'])) {
+      $block_styles .= sprintf(' --c-vertical_fullwidth_carousel_cta_background_color: %s;', $fullwidth_carousel_cta_background);
+    }
+    else {
+      $block_styles .= sprintf(' --c-vertical_fullwidth_carousel_cta_background_color: %s;', $fullwidth_carousel_cta_background);
+    }
+    $fullwidth_carousel_cta_text = !empty($block_build_config['extra_features']['color']['cta_text_color']) ? $block_build_config['extra_features']['color']['cta_text_color'] : $config_color->get('color_e');
+    if (isset($fullwidth_carousel_cta_text) && !empty($block_build_config['extra_features']['color']['cta_text_color'])) {
+      $block_styles .= sprintf(' --c-vertical_fullwidth_carousel_cta_text_color: %s;', $fullwidth_carousel_cta_text);
+    }
+    else {
+      $block_styles .= sprintf(' --c-vertical_fullwidth_carousel_cta_text_color: %s;', $fullwidth_carousel_cta_text);
+    }
+  }
+  /* Quicklink Block */
+  if ($block_build_config['id'] == 'quick_link_component_block') {
+    if (isset($block_build_config['use_highlight_border_color']) && $block_build_config['block_type'] == 'only_filters') {
+      $highlight_border_color = $config_color->get('color_b');
+      if (!empty($block_build_config['use_highlight_border_color']) && $block_build_config['use_highlight_border_color'] == TRUE) {
+        $highlight_border_color = $block_build_config['highlight_border_color'];
+      }
+      $block_styles .= sprintf(" --c-quicklink_highlight_border_color: %s;", $highlight_border_color);
+    }
+    if (isset($block_build_config['enable_accordian']) && !empty($block_build_config['enable_accordian']) && empty($block_build_config['use_sticky'])  && !empty($block_build_config['accordian_background_color']) && $block_build_config['enable_accordian'] == TRUE) {
+      $block_styles .= sprintf(" --c-quick_link_accordian_border_color: %s;", $block_build_config['accordian_background_color']);
+    }
+    if (isset($block_build_config['use_mobile_arrow']) && $block_build_config['use_mobile_arrow'] == TRUE) {
+      if (isset($block_build_config['mobile_background_color'])&& !empty($block_build_config['mobile_background_color'])) {
+        $block_styles .= sprintf(" --c-mobile_quick_link_arrow_background_color: %s;", $block_build_config['mobile_background_color']);
+      }
+      if (isset($block_build_config['mobile_arrow_color'])&& !empty($block_build_config['mobile_arrow_color'])) {
+        $block_styles .= sprintf(" --c-mobile_quick_link_arrow_color: %s;", $block_build_config['mobile_arrow_color']);
+      }
+    }
+    if (isset($block_build_config['quicklink_color_settings']['quicklink_label_color']) && !empty($block_build_config['quicklink_color_settings']['quicklink_label_color'])) {
+      $block_styles .= sprintf(" --c-quicklink-label-color: %s;", $block_build_config['quicklink_color_settings']['quicklink_label_color']);
+    }
+    if (isset($block_build_config['quicklink_color_settings']['quicklink_label_hover_color']) && !empty($block_build_config['quicklink_color_settings']['quicklink_label_hover_color'])) {
+      $block_styles .= sprintf(" --c-quicklink-label-hover-color: %s;", $block_build_config['quicklink_color_settings']['quicklink_label_hover_color']);
+    }
+    if (isset($block_build_config['quicklink_color_settings']['quicklink_background_color']) && !empty($block_build_config['quicklink_color_settings']['quicklink_background_color'])) {
+      $block_styles .= sprintf(" --c-quicklink-background-color: %s;", $block_build_config['quicklink_color_settings']['quicklink_background_color']);
+    }
+    if (isset($block_build_config['quicklink_color_settings']['quicklink_shape_border_color']) && !empty($block_build_config['quicklink_color_settings']['quicklink_shape_border_color'])) {
+      $block_styles .= sprintf(" --c-quicklink-shape-border-color: %s;", $block_build_config['quicklink_color_settings']['quicklink_shape_border_color']);
+    }
+    if (isset($block_build_config['quicklink_color_settings']['quicklink_shape_background_color']) && !empty($block_build_config['quicklink_color_settings']['quicklink_shape_background_color'])) {
+      $block_styles .= sprintf(" --c-quicklink-shape-background-color: %s;", $block_build_config['quicklink_color_settings']['quicklink_shape_background_color']);
+    }
+  }
+  if ($block_build_config['id'] == 'footer_block') {
+    // Footer Block color config.
+    if (!empty($block_build_config['override_text_color']['override_color'])) {
+      $overrideColors = !empty($block_build_config['override_text_color']['override_color']) ? '#ffffff' : '';
+      $block_styles .= sprintf(" --c-footer-marketing-text-color-override: %s;", $overrideColors);
+    }
+  }
+  /* Parent Page Header block */
+  if ($block_build_config['id'] == 'parent_page_header') {
+    $txt_clr = !empty($block_build_config['text_color']) && $block_build_config['text_color'] === 'other' ? $block_build_config['text_color_other'] : $config_color->get($block_build_config['text_color']);
+    $block_styles .= sprintf(" --c-parentpage_text_color: %s;", $txt_clr);
+    if (!empty($block_build_config['description_read_more_color'])) {
+      $block_styles .= sprintf(" --c-parentpage_description_readmore_text_color: %s;", $block_build_config['description_read_more_color']);
+    }
+  }
+  /* Supercharged Freeform Story Block */
+  if ($block_build_config['id'] == 'supercharged_freeform_story_block') {
+    if (!empty($block_build_config['change_font_color'])) {
+      $block_styles .= sprintf("--c-change_font_color: %s;", $block_build_config['change_font_color']);
+    }
+    if (!empty($block_build_config['change_background_color'])) {
+      $block_styles .= sprintf(" --c-supercharged-freeform-background-color: %s;", $block_build_config['change_background_color']);
+    }
+  }
+  /* PDPHero block */
+  if ($block_build_config['id'] == 'pdp_hero_block') {
+    if (!empty($block_build_config['background_color']) && $block_build_config['use_background_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-pdp-background-color: %s;", $block_build_config['background_color']);
+    }
+  }
+  /* Product Feature Block */
+  if ($block_build_config['id'] == 'product_feature') {
+    if (!empty($block_build_config['background_color'])) {
+      $block_styles .= sprintf(" --c-product-feature-background-color: %s;", $block_build_config['background_color']);
+    }
+    // Product feature eyebrow color config.
+    if (!empty($block_build_config['eyebrow_color_override'])) {
+
+      $block_styles .= sprintf(" --c-product-feature-eyebrow-color: %s;", $block_build_config['eyebrow_color_override']);
+    }
+    // Product feature title color config.
+    if (!empty($block_build_config['title_color_override'])) {
+      $block_styles .= sprintf(" --c-product-feature-title-color: %s;", $block_build_config['title_color_override']);
+    }
+  }
+  if ($block_build_config['id'] == 'search_faq_block') {
+    // FAQ Form Color overrid.
+    if (!empty($block_build_config['faq_filter_text_color'])) {
+      $block_styles .= sprintf(" --c-faq-filter-text-color: %s;", $block_build_config['faq_filter_text_color']);
+    }
+    if (!empty($block_build_config['faq_filter_border_color'])) {
+      $block_styles .= sprintf(" --c-faq-filter-border-color: %s;", $block_build_config['faq_filter_border_color']);
+    }
+    if (!empty($block_build_config['faq_filter_bg_color'])) {
+      $block_styles .= sprintf(" --c-faq-filter-bg-color: %s;", $block_build_config['faq_filter_bg_color']);
+    }
+    if (!empty($block_build_config['faq_section_bg_color'])) {
+      $block_styles .= sprintf(" --c-faq-section-bg-color: %s;", $block_build_config['faq_section_bg_color']);
+    }
+    if (!empty($block_build_config['faq_qa_bg_color'])) {
+      $block_styles .= sprintf(" --c-faq-qa-bg-color: %s;", $block_build_config['faq_qa_bg_color']);
+    }
+    if (!empty($block_build_config['faq_block_border_color'])) {
+      $block_styles .= sprintf(" --c-faq-block-border-color: %s;", $block_build_config['faq_block_border_color']);
+    }
+    if (!empty($block_build_config['faq_qa_text_color'])) {
+      $block_styles .= sprintf(" --c-faq-qa-text-color: %s;", $block_build_config['faq_qa_text_color']);
+    }
+    if (!empty($block_build_config['faq_qa_desc_text_color'])) {
+      $block_styles .= sprintf(" --c-faq-qa-desc-text-color: %s;", $block_build_config['faq_qa_desc_text_color']);
+    }
+    if (!empty($block_build_config['faq_section_text_color'])) {
+      $block_styles .= sprintf(" --c-faq-section-text-color: %s;", $block_build_config['faq_section_text_color']);
+    }
+    if (!empty($block_build_config['faq_qa_divider_color'])) {
+      $block_styles .= sprintf(" --c-faq-qa-divider-color: %s;", $block_build_config['faq_qa_divider_color']);
+    }
+  }
+  /* Counter Block */
+  if ($block_build_config['id'] == 'counter_block') {
+    // For Counter Text Color.
+    if (isset($block_build_config['use_text_color']) && $block_build_config['use_text_color'] == TRUE && !empty($block_build_config['text_color'])) {
+      $counter_color = $block_build_config['text_color'];
+    }
+    else {
+      $counter_color = $config_color->get('color_a');
+    }
+    if (isset($block_build_config['use_background_color']) && $block_build_config['use_background_color'] == TRUE && !empty($block_build_config['background_color'])) {
+      $counter_background_color = $block_build_config['background_color'];
+    }
+    else {
+      $counter_background_color = $config_color->get('color_e');
+    }
+    if (isset($block_build_config['use_title_color']) && $block_build_config['use_title_color'] == TRUE && !empty($block_build_config['title_color'])) {
+      $counter_title_color = $block_build_config['title_color'];
+    }
+    else {
+      $counter_title_color = $config_color->get('color_a');
+    }
+    $block_styles .= sprintf(" --c-counter_color: %s;", $counter_color);
+    $block_styles .= sprintf(" --c-counter_background_color: %s;", $counter_background_color);
+    $block_styles .= sprintf(" --c-counter_title_color: %s;", $counter_title_color);
+  }
+  // ContactHelp Banner.
+  if ($block_build_config['id'] == 'contact_help_banner_block') {
+    if (isset($block_build_config['text_color_override']) && $block_build_config['text_color_override'] == TRUE) {
+      $block_styles .= sprintf(" --c-contact-help-banner-text-color-override: %s;", $block_build_config['text_color_override']);
+    }
+  }
+  /* SocialFeed block */
+  if ($block_build_config['id'] == 'social_feed') {
+    if (isset($block_build_config['social_feed_block_text_color_override']) && !empty($block_build_config['social_feed_block_text_color_override'])) {
+      $block_styles .= sprintf(" --c-social-feed-block-text-color-override: %s;", $block_build_config['social_feed_block_text_color_override']);
+    }
+    if (isset($block_build_config['pre_background_color']) && !empty($block_build_config['pre_background_color'])) {
+      $pre_background_color = $config_color->get($block_build_config['pre_background_color']);
+      $block_styles .= sprintf(" --c-social_bg_color: %s;", $pre_background_color);
+    }
+  }
+
+  // SearchGridBlock background color config.
+  if ($block_build_config['id'] == 'search_grid_block') {
+    if (!empty($block_build_config['searchgrid_background_color'])) {
+      $block_styles .= sprintf(" --c-searchgrid_background_color: %s;", $block_build_config['searchgrid_background_color']);
+    }
+  }
+
+  /* Contact Form block */
+  if ($block_build_config['id'] == 'contact_form') {
+    $text_clr = !empty($block_build_config['text_color']) && $block_build_config['text_color'] === "other" ? $block_build_config['text_color_other'] : $config_color->get($block_build_config['text_color']);
+    if ($text_clr) {
+      $block_styles .= sprintf(" --c-customform_text_color: %s;", $text_clr);
+    }
+  }
+  // Flexible framer block.
+  if ($block_build_config['id'] == 'flexible_framer_block') {
+
+    // Flexible framer text color override config.
+    if (isset($block_build_config["override_text_color"]['select_text_color_class']) && $block_build_config["override_text_color"]['override_color'] == TRUE) {
+      $text_clr_selected = !empty($block_build_config["override_text_color"]['select_text_color_class']) ? $block_build_config["override_text_color"]['select_text_color_class'] : '#FFFFFF';
+      $block_styles .= sprintf(" --c-flexible-framer-text-color-override: %s;", $text_clr_selected);
+    }
+    // Flexible framer item bg color text color config.
+    if (!empty($block_build_config['background_color']) && $block_build_config['use_background_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-flexible_framer_item_bg_color: %s;", $block_build_config['background_color']);
+    }
+    // Flexible framer item text  color config.
+    if (!empty($block_build_config['text_color']) && $block_build_config['use_text_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-flexible_framer_item_text_color: %s;", $block_build_config['text_color']);
+    }
+    // Flexible framer item text  color config.
+    if (!empty($block_build_config['border_color']) && $block_build_config['use_border_color'] == TRUE) {
+      $block_styles .= sprintf(" --c-flexible_framer_item_border_color: %s;", $block_build_config['border_color']);
+    }
+    // Flexible framer CTA background color and CTA text color override config.
+    $flexible_framer_cta_background = $config_color->get('color_b');
+    $flexible_framer_cta_text = $config_color->get('color_e');
+    if ((bool) $block_build_config['cta_bg_text'] === TRUE) {
+      $flexible_framer_cta_background = !empty($block_build_config['cta_background']) ? $block_build_config['cta_background'] : $config_color->get('color_b');
+      $flexible_framer_cta_text = !empty($block_build_config['cta_text_color']) ? $block_build_config['cta_text_color'] : $config_color->get('color_e');
+    }
+    $block_styles .= sprintf(' --c-flexible-framer-cta-text-color: %s;', $flexible_framer_cta_text);
+    $block_styles .= sprintf(' --c-flexible-framer-cta-background-color: %s;', $flexible_framer_cta_background);
+    // Flexible framer background override config.
+    if (!empty($block_build_config['select_background_color']) && $block_build_config['select_background_color'] === 'other') {
+      $block_styles .= sprintf(" --c-flexible-framer-background-color-override: %s;", $block_build_config['other_background_color']);
+    }
+  }
+  return $block_styles;
+}
+
+/**
+ * Block Build style properties.
+ */
+function mars_common_block_build_properties($block_build_config, $block_build_theme_id) {
+  $block_styles = sprintf(":root [data-theme='%s'] {%s}", $block_build_theme_id, mars_common_block_style($block_build_config));
+  $block_head_style['#attached']['html_head'][] = [
+    [
+      '#type' => 'html_tag',
+      '#tag' => 'style',
+      '#value' => $block_styles,
+      '#attributes' => [
+        'type' => 'text/css',
+      ],
+    ],
+    'custom_css' . $block_build_theme_id,
+  ];
+  return $block_head_style;
+}
+
+/**
+ * Css properties.
+ */
+function mars_common_block_build_style($block_build_config) {
+  $block_build_styles = [];
+  $block_unique_id = uniqid();
+  $block_build_theme_id = $block_build_config["id"] . '_' . $block_unique_id;
+  $head_style = mars_common_block_build_properties($block_build_config, $block_build_theme_id);
+  $block_build_styles['block_build_head_style'] = $head_style;
+  $block_build_styles['block_build_theme_id'] = $block_build_theme_id;
+  return $block_build_styles;
+}
+
+/**
+ * Return theme color palette html.
+ */
+function mars_common_get_color_palette($color) {
+  return '<span class="theme-color-palette bg_' . $color . '" data-theme="drupal"></span>';
+}

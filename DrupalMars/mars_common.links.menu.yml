@@ -1,0 +1,88 @@
+mars_common.admin.site_labels:
+  title: 'MARS Site label settings'
+  description: 'Settings of MARS site level labels'
+  parent: system.admin_config_system
+  route_name: mars_common.admin.site_labels
+  weight: 100
+
+mars_common.admin.emails_configuration:
+  title: 'MARS Emails configuration'
+  description: 'Settings of MARS emails forms elements'
+  parent: system.admin_config_system
+  route_name: mars_common.admin.emails_configuration
+  weight: 100
+
+mars_common.admin.card_color_settings:
+  title: 'MARS Card background gradient settings'
+  description: 'Background gradient settings for cards'
+  parent: system.admin_config_system
+  route_name: mars_common.card_color_settings
+  weight: 100
+
+mars_common.disable_language:
+  title: 'Exclude language settings'
+  parent: system.admin_config_regional
+  description: 'Exclude language from language switcher and disable access to pages with selected language(s) (for anonymous users only)'
+  route_name: mars_common.admin.disable_language
+  weight: 100
+
+mars_common.theme_configuration:
+  title: 'Theme Configurator'
+  description: 'Configure Theme'
+  parent: system.themes_page
+  route_name: system.theme_settings_theme
+  route_parameters: { theme: 'emulsifymars'}
+  weight: -10
+
+mars_common.character_limits_page:
+  title: 'MARS Character Limit Page'
+  description: 'Configuration of Mars Character Limit Page'
+  parent: system.admin_config_system
+  route_name: mars_common.character_limit_page
+  weight: 100
+
+mars_common.admin_form:
+  title: 'SFMC settings'
+  route_name: mars_common.sfmc_settings
+  description: 'Settings page for SFMC'
+  parent: system.admin_config_services
+
+mars_common.admin.sfmc_direct_api_form:
+  title: 'SFMC Direct API settings'
+  route_name: mars_common.sfmc_direct_api_settings
+  description: 'Settings page for SFMC Direct API'
+  parent: system.admin_config_services
+
+mars_common.page_level_theme:
+  title: 'Page Theme Override Based on Campaign'
+  description: 'Settings related for page theme override based on campaign.'
+  route_name: mars_common.page_level_theme
+  parent: 'system.admin_config_services'
+
+mars_common.geoip.popup:
+  title: 'GeoIP Popup Page & Language Selector Configuration'
+  description: 'Settings related for geoIP popup page & language selector configuration'
+  route_name: mars_common.geoip.popup
+  parent: 'system.admin_config_services'
+  weight: 4
+
+mars_common.element_id:
+  title: 'Component Feature Fields Enable'
+  description: 'Add the features to show in component.'
+  route_name: mars_common.element_id
+  parent: 'system.admin_config_services'
+  weight: 5
+
+mars_common.visual_story_settings:
+  title: 'Visual Story settings'
+  description: 'Settings for Visual stories for AMP.'
+  route_name: mars_common.visual_story_settings
+  parent: 'system.admin_config_services'
+  weight: 80
+
+mars_common.admin.custom_api_configuration:
+  title: 'MARS Custom API configuration'
+  description: 'Settings of MARS Custom API forms elements'
+  parent: system.admin_config_system
+  route_name: mars_common.admin.custom_api_configuration
+  weight: 100

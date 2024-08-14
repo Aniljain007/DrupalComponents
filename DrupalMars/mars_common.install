@@ -1,0 +1,667 @@
+<?php
+
+/**
+ * @file
+ * Update scripts for the Mars Common module.
+ */
+
+use Drupal\block\Entity\Block;
+use Drupal\Core\Config\Entity\ConfigEntityUpdater;
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\mars_common\ThemeConfiguratorService;
+
+/**
+ * Implements hook_update_N().
+ *
+ * Delete all nodes of a "Contact & Help" content type.
+ */
+function mars_common_update_8001() {
+  $storage_handler = \Drupal::entityTypeManager()->getStorage('node');
+  $entities = $storage_handler->loadByProperties(['type' => 'contact_help']);
+  $storage_handler->delete($entities);
+}
+
+/**
+ * Implements hook_update_N().
+ *
+ * Delete content type "Contact & Help".
+ */
+function mars_common_update_8002() {
+  $content_type = \Drupal::entityTypeManager()->getStorage('node_type')->load('contact_help');
+  if ($content_type) {
+    $content_type->delete();
+  }
+}
+
+/**
+ * Sanitize Multipack Products per node overridden layout (AB#190757).
+ */
+function mars_common_update_8003() {
+  $storage_handler = \Drupal::entityTypeManager()->getStorage('node');
+  $multipack_products = $storage_handler->loadByProperties(['type' => 'product_multipack']);
+  $product_multipack_block_id = 'pdp_product_multipack_block';
+  foreach ($multipack_products as $multipack_product) {
+    $display = $multipack_product->layout_builder__layout ?? NULL;
+    if (!$display) {
+      continue;
+    }
+
+    foreach ($display->getSections() as $section) {
+      foreach ($section->getComponents() as $component) {
+        if ($component->getPluginId() === $product_multipack_block_id) {
+          $section->removeComponent($component->getUuid());
+          $multipack_product->save();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Hide footer block at error page (AB#184643).
+ */
+function mars_common_update_8004() {
+  /** @var \Drupal\Core\Config\Config $config */
+  $config = \Drupal::service('config.factory')->getEditable('block.block.footerblock');
+  $config->set('visibility', [
+    'entity_bundle:node' => [
+      'id' => 'entity_bundle:node',
+      'bundles' => ['error_page' => 'error_page'],
+      'negate' => TRUE,
+      'context_mapping' => ['node' => '@node.node_route_context:node'],
+    ],
+  ]);
+  $config->save();
+}
+
+/**
+ * Update image field definition.
+ */
+function mars_common_update_8005() {
+  // Update field field_ff_item_image.
+  $definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_definition = $definition_update_manager->getFieldStorageDefinition('field_ff_item_image', 'block_content');
+  $definition_update_manager->updateFieldStorageDefinition($field_definition);
+  // Update field_inline_image_file.
+  $definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_definition = $definition_update_manager->getFieldStorageDefinition('field_inline_image_file', 'block_content');
+  $definition_update_manager->updateFieldStorageDefinition($field_definition);
+  // Update field_list_item_image.
+  $definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_definition = $definition_update_manager->getFieldStorageDefinition('field_list_item_image', 'block_content');
+  $definition_update_manager->updateFieldStorageDefinition($field_definition);
+  // Update field_full_image_file.
+  $definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_definition = $definition_update_manager->getFieldStorageDefinition('field_full_image_file', 'block_content');
+  $definition_update_manager->updateFieldStorageDefinition($field_definition);
+  // Update field_allergen_image.
+  $definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_definition = $definition_update_manager->getFieldStorageDefinition('field_allergen_image', 'taxonomy_term');
+  $definition_update_manager->updateFieldStorageDefinition($field_definition);
+}
+
+/**
+ * Increase the length of "field_description" to 255 characters for poll entity.
+ */
+function mars_common_update_8006() {
+  // Resize column.
+  $database = \Drupal::database();
+  $database->query("ALTER TABLE poll__field_description MODIFY field_description_value VARCHAR(255)");
+
+  // Update storage schema.
+  $storage_key = 'poll.field_schema_data.field_description';
+  $storage_schema = \Drupal::keyValue('entity.storage_schema.sql');
+  $field_schema = $storage_schema->get($storage_key);
+  $field_schema['poll__field_description']['fields']['field_description_value']['length'] = 255;
+  $storage_schema->set($storage_key, $field_schema);
+
+  // Update field configuration.
+  $config = \Drupal::configFactory()
+    ->getEditable('field.storage.poll.field_description');
+  $config->set('settings.max_length', 255);
+  $config->save(TRUE);
+
+  FieldStorageConfig::loadByName('poll', 'field_description')->save();
+}
+
+/**
+ * Delete old card color config.
+ */
+function mars_common_update_8007() {
+  /** @var \Drupal\Core\Config\ConfigFactoryInterface $config_factory */
+  $config_factory = \Drupal::service('config.factory');
+  $config = $config_factory->getEditable('card_color.settings');
+  $config->delete();
+}
+
+/**
+ * Delete syslog logs from the public filesystem.
+ */
+function mars_common_update_8009() {
+  \Drupal::service('file_system')->deleteRecursive('public://logs/archive');
+  \Drupal::service('file_system')->delete('public://logs/drupal.log');
+}
+
+/**
+ * Enable dependency module.
+ */
+function mars_common_update_8010() {
+  $modules = [
+    'mars_media',
+  ];
+  \Drupal::service('module_installer')->install($modules);
+}
+
+/**
+ * Update 'field_recipe_cooking_time' field storage definitions.
+ */
+function mars_common_update_8011() {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $field_storage_definition = $entity_definition_update_manager->getFieldStorageDefinition('field_recipe_cooking_time', 'node');
+  $entity_definition_update_manager->updateFieldStorageDefinition($field_storage_definition);
+}
+
+/**
+ * Add letter spacing configuration.
+ */
+function mars_common_update_8012() {
+  /** @var \Drupal\Core\Config\ConfigFactoryInterface $config_factory */
+  $config_factory = \Drupal::service('config.factory');
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('headline_font_mobile_letterspacing', ThemeConfiguratorService::LETTERSPACING_MOBILE_DEFAULT);
+  $config->set('headline_font_tablet_letterspacing', ThemeConfiguratorService::LETTERSPACING_TABLET_DEFAULT);
+  $config->set('headline_font_desktop_letterspacing', ThemeConfiguratorService::LETTERSPACING_DESKTOP_DEFAULT);
+  $config->set('primary_font_mobile_letterspacing', ThemeConfiguratorService::LETTERSPACING_MOBILE_DEFAULT);
+  $config->set('primary_font_tablet_letterspacing', ThemeConfiguratorService::LETTERSPACING_TABLET_DEFAULT);
+  $config->set('primary_font_desktop_letterspacing', ThemeConfiguratorService::LETTERSPACING_DESKTOP_DEFAULT);
+  $config->set('secondary_font_mobile_letterspacing', ThemeConfiguratorService::LETTERSPACING_MOBILE_DEFAULT);
+  $config->set('secondary_font_tablet_letterspacing', ThemeConfiguratorService::LETTERSPACING_TABLET_DEFAULT);
+  $config->set('secondary_font_desktop_letterspacing', ThemeConfiguratorService::LETTERSPACING_DESKTOP_DEFAULT);
+  $config->save();
+}
+
+/**
+ * Update modules registry for modules moved to Composer.
+ */
+function mars_common_update_8013() {
+  \Drupal::service('extension.list.module')->reset();
+  \Drupal::cache()->invalidateAll();
+}
+
+/**
+ * Install 'layout builder at' module in order to fix installation issue.
+ */
+function mars_common_update_8014() {
+  \Drupal::service('module_installer')
+    ->install(['layout_builder_at']);
+}
+
+/**
+ * Set default value for nutrition table visibility option.
+ */
+function mars_common_update_8015() {
+  /** @var \Drupal\Core\Config\ConfigFactoryInterface $config_factory */
+  $config_factory = \Drupal::service('config.factory');
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('show_nutrition_info', TRUE);
+  $config->save();
+}
+
+/**
+ * Update jquery_colorpicker values for theme configurations.
+ *
+ * Add '#' to the values.
+ */
+function mars_common_update_8018() {
+  $color_fields_map = [
+    'color_a',
+    'color_b',
+    'color_c',
+    'color_d',
+    'color_e',
+    'color_f',
+    'top_nav',
+    'top_nav_gradient',
+    'top_footer',
+    'top_footer_gradient',
+    'cookie_banner',
+    'cookie_banner_gradient',
+    'bottom_nav',
+    'card_background',
+    'card_title',
+    'card_eyebrow',
+  ];
+
+  $config = \Drupal::service('config.factory')->getEditable('emulsifymars.settings');
+  $data = $config->getRawData();
+  \Drupal::service('config.factory')->getEditable('emulsifymars.settings');
+  foreach ($color_fields_map as $color_field) {
+    if (!empty($data[$color_field]) && $data[$color_field][0] != '#') {
+      $data[$color_field] = '#' . $data[$color_field];
+    }
+  }
+
+  $config->setData($data)->save();
+}
+
+/**
+ * Import layout_selection field for Basic Page CT.
+ */
+function mars_common_update_8021(&$sandbox = []) {
+  $config_entity_updater = \Drupal::classResolver(ConfigEntityUpdater::class);
+  try {
+    $config_entity_updater->update($sandbox, 'entity_view_display');
+  }
+  catch (\Exception $e) {
+    \Drupal::logger('my_module')->error($e->getMessage());
+  }
+}
+
+/**
+ * Update jquery_colorpicker values for header and footer configurations.
+ *
+ * Add '#' to the values.
+ */
+function mars_common_update_8023() {
+  $blocks = [
+    'marsheaderblock' => [
+      'alert_banner' => ['bg_color', 'text_color'],
+      'override_text_color' => [
+        'hover_color',
+        'mobile_cross_hamburger',
+        'mobile_main_menu_items_color',
+        'mobile_search_right_menu_section',
+        'mobile_sub_menu_items_color',
+      ],
+    ],
+    'footerblock' => [
+      'override_text_color' => ['hover_color'],
+    ],
+  ];
+
+  foreach ($blocks as $block_name => $parent_fields) {
+    $block = Block::load($block_name);
+
+    if (empty($block)) {
+      continue;
+    }
+
+    $settings = $block->get('settings');
+
+    foreach ($parent_fields as $parent_field_name => $field_names) {
+      foreach ($field_names as $field_name) {
+        if (
+          isset($settings[$parent_field_name][$field_name][0]) &&
+          $settings[$parent_field_name][$field_name][0] != '#'
+        ) {
+          $settings[$parent_field_name][$field_name] = '#' . $settings[$parent_field_name][$field_name];
+        }
+      }
+    }
+    $block->set('settings', $settings);
+    $block->save();
+  }
+}
+
+/**
+ * Update jquery_colorpicker values for custom blocks. Add '#' to the values.
+ */
+function mars_common_update_8024() {
+  $color_fields_map = [
+    'parent_page_header' => ['text_color_other'],
+    'homepage_hero_block' => ['background_color'],
+    'recipe_detail_hero' => ['custom_background_color'],
+    'freeform_story_block' => ['custom_background_color'],
+    'pdp_hero_block' => ['background_color', 'brand_shape_color'],
+  ];
+
+  $color_fields = array_reduce($color_fields_map, 'array_merge', []);
+
+  $database = \Drupal::database();
+  $query = $database->select('node__layout_builder__layout', 'lb');
+  $query->fields('lb', ['entity_id']);
+  $orGroup = $query->orConditionGroup();
+  foreach ($color_fields as $color_field) {
+    $orGroup->condition('lb.layout_builder__layout_section', '%' . $color_field . '%', 'LIKE');
+  }
+  $query->condition($orGroup);
+
+  $results = array_unique($query->execute()->fetchCol());
+
+  $storage_handler = \Drupal::entityTypeManager()->getStorage('node');
+
+  foreach ($results as $entity_id) {
+    $node = $storage_handler->load($entity_id);
+    foreach ($node->getTranslationLanguages() as $langcode => $language) {
+      $translation = $node->getTranslation($langcode);
+
+      foreach ($translation->layout_builder__layout->getSections() as $section) {
+        foreach ($section->getComponents() as $component) {
+
+          $configs = $component->get('configuration');
+          if (!isset($color_fields_map[$configs['id']])) {
+            continue;
+          }
+          foreach ($color_fields_map[$configs['id']] as $field) {
+            if (!empty($configs[$field]) && $configs[$field][0] != '#') {
+              $configs[$field] = '#' . $configs[$field];
+              $component->setConfiguration($configs);
+            }
+          }
+        }
+      }
+      $translation->save();
+    }
+  }
+}
+
+/**
+ * Add top footer and top footer gradient fields to theme configurator.
+ */
+function mars_common_update_8025() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('footer_top', $config->get('top_nav'), '');
+  $config->set('footer_top_gradient', $config->get('top_nav_gradient'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add cookie banner fields to theme configurator.
+ */
+function mars_common_update_8026() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('cookie_banner', $config->get('color_b'), '');
+  $config->set('cookie_banner_gradient', $config->get('color_b'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add card color fields to theme configurator.
+ */
+function mars_common_update_8027() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('card_title', $config->get('color_a'), '');
+  $config->set('card_eyebrow', $config->get('color_a'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add cookie_banner_text field to theme configurator.
+ */
+function mars_common_update_8028() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('cookie_banner_text', $config->get('color_a'), '');
+  $config->set('cookie_banner_text', $config->get('color_a'), '');
+  $config->set('cookie_banner_brand_border', FALSE);
+  $config->set('cookie_banner_override', FALSE);
+  $config->save(TRUE);
+}
+
+/**
+ * Add entrygate field to theme configurator.
+ */
+function mars_common_update_8029() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('entrygate_background_color', $config->get('color_d'), '');
+  $config->set('entrygate_title_color', $config->get('color_a'), '');
+  $config->set('entrygate_text_color', $config->get('color_a'), '');
+  $config->set('entrygate_date_color', $config->get('color_a'), '');
+  $config->set('entrygate_alert_color', $config->get('color_b'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add product filter field to theme configurator.
+ */
+function mars_common_update_8030() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('product_filter_arrow_color', $config->get('color_b'), '');
+  $config->set('product_filter_clearall_color', $config->get('color_b'), '');
+  $config->set('product_filter_tickmark_color', $config->get('color_d'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add language and region selector field to theme configurator.
+ */
+function mars_common_update_8031() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('language_region_selector_text_color', $config->get('color_a'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add rel attributes to links having target is blank and url is external URL.
+ */
+function mars_common_update_8032() {
+  global $base_url;
+  $menu_links = \Drupal::entityTypeManager()->getStorage('menu_link_content')->loadByProperties(['menu_name' => 'legal-links-menu']);
+  foreach ($menu_links as $menu_link) {
+    if (isset($menu_link->link->options['attributes']['target']) && $menu_link->link->options['attributes']['target'] == '_blank') {
+      $url_obj = $menu_link->getUrlObject();
+
+      // Drush updb was giving error for getUri() function if url is route
+      // route:entity.node.canonical;node=11.
+      // then we are getting below error like this This URL has a Drupal route,
+      // so the canonical form is not a URI.
+      $link_url = $url_obj->toUriString();
+
+      if (strpos($link_url, $base_url) == FALSE) {
+        $options = $menu_link->link->options;
+        $options['attributes']['rel'] = 'noopener noreferrer';
+        $menu_link->link->options = $options;
+        $menu_link->save();
+      }
+    }
+  }
+}
+
+/**
+ * Hook update for removing solr search index config from ignore.
+ */
+function mars_common_update_8033() {
+  $config_factory = \Drupal::service('config.factory');
+  $config_ignore_config = $config_factory->getEditable('config_ignore.settings');
+  $config_ignore_list = $config_ignore_config->get('ignored_config_entities');
+
+  // Remove config search_api_solr from config_ignore.settings.
+  if (($key = array_search('search_api_solr.*', $config_ignore_list)) !== FALSE) {
+    unset($config_ignore_list[$key]);
+  }
+
+  if (($key = array_search('search_api.server.acquia_search_server', $config_ignore_list)) !== FALSE) {
+    unset($config_ignore_list[$key]);
+  }
+
+  $config_ignore_config->set('ignored_config_entities', $config_ignore_list)->save();
+}
+
+/**
+ * Hook update to enable slient mode for security module.
+ */
+function mars_common_update_8035() {
+  \Drupal::service('config.factory')->getEditable('seckit.settings')
+    ->set('seckit_xss.csp.silent-report-mode', 1)
+    ->save();
+}
+
+/**
+ * Hook update to add missing Alt-text for the Media Images.
+ */
+function mars_common_update_8036() {
+  $lighthouse_ids = \Drupal::service('entity_type.manager')->getStorage('media')->getQuery()->condition('bundle', 'lighthouse_image')->execute();
+  $media_storage = \Drupal::service('entity_type.manager')
+    ->getStorage('media');
+  foreach ($lighthouse_ids as $id) {
+    $media = $media_storage->load($id);
+    $image_name = $media->getName();
+    $alt_text_light = 'Image ' . str_replace("-", " ", $image_name);
+    $alt_text = explode(".", $alt_text_light);
+    if ($media
+      ->field_media_image->alt == NULL) {
+      $media
+        ->field_media_image->alt = $alt_text[0];
+      $media->save();
+    }
+  }
+  $localimage_ids = \Drupal::service('entity_type.manager')
+    ->getStorage('media')->getQuery()->condition('bundle', 'image')
+    ->execute();
+
+  foreach ($localimage_ids as $id) {
+    $media = $media_storage->load($id);
+    $image_name = $media->getName();
+    $alt_text_local = 'Image ' . str_replace("-", " ", $image_name);
+    $alt_text = explode(".", $alt_text_local);
+    if ($media->image->alt == NULL) {
+      $media->image->alt = $alt_text[0];
+      $media->save();
+    }
+  }
+}
+
+/**
+ * Add search count to theme configurator.
+ */
+function mars_common_update_8037() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('count_color', $config->get('color_a'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add supercharged freeform story block field to theme configurator.
+ */
+function mars_common_update_8038() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('supercharged_freeform_text_color', $config->get('color_a'), '');
+  $config->set('supercharged_freeform_background_color', '#ffffff', '');
+  $config->set('supercharged_freeform_link_text_color', '#ffffff', '');
+  $config->set('supercharged_freeform_button_background_color', $config->get('color_b'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add supercharged card component field to theme configurator.
+ */
+function mars_common_update_8039() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('supercharged_card_text_color', $config->get('color_a'), '');
+  $config->set('supercharged_card_background_color', '#ffffff', '');
+  $config->set('supercharged_card_link_text_color', '#ffffff', '');
+  $config->set('supercharged_card_button_background_color', $config->get('color_b'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add search count to theme configurator.
+ */
+function mars_common_update_8040() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('text_override_color', $config->get('color_a'), '');
+  $config->set('text_background_color', $config->get('color_e'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add Breed selector fields to theme configurator.
+ */
+function mars_common_update_8041() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('breed_selector_background_color', $config->get('color_e'), '');
+  $config->set('breed_selector_image_color', $config->get('color_b'), '');
+  $config->set('breed_selector_image_hover_select_color', $config->get('color_a'), '');
+  $config->set('breed_selector_text_color', $config->get('color_a'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Add Age calculator fields to theme configurator.
+ */
+function mars_common_update_8042() {
+  $config_factory = \Drupal::configFactory();
+  $config = $config_factory->getEditable('emulsifymars.settings');
+  $config->set('age_calculator_background_color', $config->get('color_e'), '');
+  $config->set('age_calculator_image_color', $config->get('color_b'), '');
+  $config->set('age_calculator_image_hover_select_color', $config->get('color_a'), '');
+  $config->set('age_calculator_text_color', $config->get('color_a'), '');
+  $config->set('related_section_background_color', $config->get('color_e'), '');
+  $config->set('do_you_know_section_background_color', $config->get('color_e'), '');
+  $config->save(TRUE);
+}
+
+/**
+ * Updating Copyright year in Footer block.
+ */
+function mars_common_update_9501() {
+  /** @var \Drupal\Core\Config\Config $config */
+  $config = \Drupal::service('config.factory')->getEditable('block.block.footerblock');
+  $settings = $config->get('settings');
+  $current_year = date("Y");
+  $marketing_value = preg_replace("/\b\d{4}\b/", $current_year, $settings['marketing']['value']);
+  $settings['marketing']['value'] = $marketing_value;
+  $config->set('settings', $settings);
+  $config->save();
+}
+
+/**
+ * Removed contributed module swiftmailer.
+ */
+function mars_common_update_10101() {
+  // Removed module from core.extension module.
+  $module_data = \Drupal::config('core.extension')->get('module');
+  unset($module_data['swiftmailer']);
+  \Drupal::configFactory()->getEditable('core.extension')->set('module', $module_data)->save();
+
+  // Removed entry in the system.schema key/value storage.
+  \Drupal::keyValue('system.schema')->delete('acquia_lift');
+  \Drupal::keyValue('system.schema')->delete('acquia_lift_publisher');
+  \Drupal::keyValue('system.schema')->delete('js_components');
+}
+
+/**
+ * Remove advanced cron agg setting.
+ */
+function mars_common_update_10102() {
+  // Removed module from core.extension module.
+  $module_data = \Drupal::config('core.extension')->get('module');
+  unset($module_data['advagg']);
+  \Drupal::configFactory()->getEditable('core.extension')->set('module', $module_data)->save();
+  \Drupal::configFactory()->getEditable('ultimate_cron.job.advagg_cron')->delete();
+}
+
+/**
+ * Remove unwanted site manager permission.
+ */
+function mars_common_update_10103() {
+
+  $roleId = 'site_manager';
+  $brokenPermissions = [
+    'configure all landing_page node layout overrides',
+    'configure editable landing_page node layout overrides',
+  ];
+
+  $permission_definitions = \Drupal::service('user.permissions')->getPermissions();
+  $valid_permissions = array_intersect($brokenPermissions, array_keys($permission_definitions));
+  $invalid_permissions = array_diff($brokenPermissions, $valid_permissions);
+
+  if (count($invalid_permissions)) {
+    $role = \Drupal::entityTypeManager()->getStorage('user_role')->load($roleId);
+    foreach ($invalid_permissions as $invalid_permission_val) {
+      $role->revokePermission($invalid_permission_val);
+    }
+    $role->save();
+  }
+}

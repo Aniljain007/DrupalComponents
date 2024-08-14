@@ -1,0 +1,186 @@
+mars_common.poll.votes:
+  path: '/poll/{poll}/results'
+  defaults:
+    _title_callback: '\Drupal\mars_common\Controller\PollController::getResultsViewTitle'
+    _controller: '\Drupal\mars_common\Controller\PollController::buildResultsView'
+  requirements:
+    _permission: 'administer polls'
+  options:
+    _admin_route: TRUE
+    parameters:
+      poll:
+        type: entity:poll
+
+mars_common.admin.site_labels:
+  path: '/admin/config/site-labels'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsSiteLabelsForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.admin.emails_configuration:
+  path: '/admin/config/emails-configuration'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsEmailsConfigurationForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.card_color_settings:
+  path: '/admin/config/card-color-settings'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsCardColorSettingsForm'
+    _title: 'Card Outer Gradient Settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.poll_block_ajax:
+  path: '/poll_block/ajax'
+  defaults:
+    _controller: '\Drupal\mars_common\Controller\BlockAjaxController::ajaxBlock'
+  requirements:
+    _permission: 'access content'
+  options:
+    no_cache: 'TRUE'
+
+mars_common.retailer_details:
+  path: '/retailer/details'
+  defaults:
+    _controller: '\Drupal\mars_common\Controller\RetailerDetailsController::details'
+    _title: 'Retailer Detils'
+  requirements:
+    _permission: 'access content'
+    _format: json
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+
+mars_common.admin.disable_language:
+  path: '/admin/config/disable-language'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsDisableLanguageForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.theme_api:
+  path: '/api/v1/theme-configuration'
+  defaults:
+    _controller: '\Drupal\mars_common\Controller\ThemeSettingsApiController::main'
+  requirements:
+    _permission: 'access content'
+
+mars_common.character_limit_page:
+  path: '/admin/config/character-limit-page'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsCharacterLimitPageForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.bc_video_inventory:
+  path: '/lighthouse-inventory'
+  defaults:
+    _controller: '\Drupal\mars_common\Controller\LightHouseInventory::videoList'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+entity.mars_common.canonical:
+  path: '/path-file/{path_file_entity}'
+  defaults:
+    _controller: '\Drupal\mars_common\Controller\MarsPathFileController::file'
+    _title: ''
+  requirements:
+    _entity_access: 'path_file_entity.view'
+
+mars_common.sfmc_settings:
+  path: '/admin/config/services/sfmc'
+  defaults:
+    _form: '\Drupal\mars_common\Form\SfmcAdminForm'
+    _title: 'SFMC settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.page_level_theme:
+  path: '/admin/config/page-level-theme'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsPageLevelThemeForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.sfmc_direct_api_settings:
+  path: '/admin/config/services/sfmc-direct-api'
+  defaults:
+    _form: '\Drupal\mars_common\Form\SfmcDirectApiForm'
+    _title: 'SFMC Direct API settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.geoip.popup:
+  path: '/admin/config/services/geoip_popup'
+  defaults:
+    _form: 'Drupal\mars_common\Form\Settings\GeoIpPopupConfigForm'
+    _title: 'GeoIp popup & language selector configuration'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.element_id:
+  path: '/admin/config/services/add_element_id'
+  defaults:
+    _form: 'Drupal\mars_common\Form\MarsElementIdForm'
+    _title: 'Add element id to block component'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.json_story_social_providers:
+  path: '/api/story-social-providers'
+  defaults:
+    _controller: 'Drupal\mars_common\Controller\VisualStorySocialProviders::index'
+    _title: 'Visual Story Social Providers'
+  methods:  [GET]
+  requirements:
+    # A public route to get Visual story Social providers for all users.
+    _access: 'TRUE'
+
+mars_common.visual_story_settings:
+  path: '/admin/config/services/visual-story-settings'
+  defaults:
+    _form: 'Drupal\mars_common\Form\VisualStorySettings'
+    _title: 'Visual Story settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+mars_common.admin.custom_api_configuration:
+  path: '/admin/config/custom-api-configuration'
+  defaults:
+    _form: '\Drupal\mars_common\Form\MarsApiConfigurationForm'
+  requirements:
+    _permission: 'administer site configuration'
+  options:
+    _admin_route: TRUE,
+    no_cache: 'TRUE'
+
+mars_common.json_version_helper:
+  path: '/marsapi/json-version-helper'
+  defaults:
+    _controller: 'Drupal\mars_common\Controller\VersionHelper::getVersion'
+    _title: 'Version Helper'
+  methods:  [GET]
+  requirements:
+    # A public route to get Visual story Social providers for all users.
+    _access: 'TRUE'

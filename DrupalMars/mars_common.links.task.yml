@@ -1,0 +1,14 @@
+mars_common.poll.votes:
+  route_name: mars_common.poll.votes
+  base_route: entity.poll.canonical
+  title: 'Results'
+  weight: 10
+mars_common.emails_configuration:
+  route_name: mars_common.admin.emails_configuration
+  title: 'Emails configuration'
+  base_route: mars_common.admin.emails_configuration
+
+mars_common.element_id:
+  route_name: mars_common.element_id
+  title: 'Element Id'
+  base_route: mars_common.element_id

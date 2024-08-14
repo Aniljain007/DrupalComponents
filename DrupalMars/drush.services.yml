@@ -1,0 +1,6 @@
+services:
+  mars_common.commands:
+    class: \Drupal\mars_common\Commands\CustomExportCommand
+    tags:
+      - { name: drush.command }
+    arguments: ["@entity_type.manager", "@config.storage"]
